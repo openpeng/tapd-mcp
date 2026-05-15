@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"F:/mycode/mcp-servers/tapd-mcp/.claude/skills/tapd\")",
+      "Bash(npm run *)",
+      "Bash(npm pack *)"
+    ]
+  }
+}
