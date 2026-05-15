@@ -1,11 +1,11 @@
 ---
 name: tapd
-description: 用 TAPD MCP 工具操作 TAPD（腾讯敏捷研发平台）的需求/任务/缺陷/迭代/评论/发布。当用户要求查看、创建、修改 TAPD story/task/bug/iteration/release/comment，或贴出 tapd.cn 链接要求处理时调用。覆盖 24 个 `tapd_*` 工具，并给出字段裁剪、状态枚举、URL 解析、工时填写等关键约定。
+description: 用 TAPD MCP 工具操作 TAPD（腾讯敏捷研发平台）的需求/任务/缺陷/迭代/评论/发布。当用户要求查看、创建、修改 TAPD story/task/bug/iteration/release/comment，或贴出 tapd.cn 链接要求处理时调用。覆盖 25 个 `tapd_*` 工具，并给出字段裁剪、状态枚举、URL 解析、工时填写等关键约定。
 ---
 
 # TAPD 操作说明
 
-本 skill 对应 `tapd-mcp` 服务暴露的 24 个工具，覆盖 6 类资源：Story（需求）、Task（任务）、Bug、Iteration（迭代）、Release（发布）、Comment（评论），外加 URL 解析与代码关联。
+本 skill 对应 `tapd-mcp` 服务暴露的 25 个工具，覆盖 6 类资源：Story（需求）、Task（任务）、Bug、Iteration（迭代）、Release（发布）、Comment（评论），外加 URL 解析与代码关联。
 
 ## 何时使用
 
@@ -23,7 +23,7 @@ description: 用 TAPD MCP 工具操作 TAPD（腾讯敏捷研发平台）的需�
 | Iteration | `tapd_get_iteration`, `tapd_list_iterations` | `tapd_create_iteration`, `tapd_update_iteration` |
 | Release | `tapd_list_releases` | `tapd_create_release`, `tapd_update_release` |
 | Comment | `tapd_list_comments` | `tapd_add_comment` |
-| Util | `tapd_parse_url` | — |
+| Util | `tapd_parse_url`, `tapd_get_current_user` | — |
 
 ## 通用约定
 
@@ -32,6 +32,12 @@ description: 用 TAPD MCP 工具操作 TAPD（腾讯敏捷研发平台）的需�
 - 大多数工具都要 `workspace_id`。环境变量 `TAPD_WORKSPACE_ID` 存在时可省略，否则必填。
 - 给 URL 时（仅 `tapd_get_story` / `tapd_get_task` / `tapd_get_bug` 支持 `url` 参数），可以不提供 `workspace_id`，会从 URL 解析。
 - 不知道 wsid 又没默认值时，先 `tapd_parse_url` 把链接拆出来。
+
+### 识别"我"是谁
+
+- `tapd_get_current_user` 返回 API token 持有者的身份；依赖环境变量 `TAPD_CURRENT_USER`（值为 TAPD 用户 ID，如 `xiaopeng_lei`）。
+- 不传参就只回 env 值；传 `workspace_id`（或回退默认值）会去 `/users/get_users_by_workspace_id` 拉昵称、邮箱等附加信息。
+- 用户问"我负责的"、"我创建的"、"分配给我"这类相对身份的问题时，先调一次此工具拿到自己的 user id，再当作 `owner` / `creator` / `current_owner` 过滤参数。
 
 ### fields 字段裁剪（仅 Story 的 get/list）
 

@@ -16,6 +16,7 @@ import { TapdClient } from './tapd-client.js';
 
 const API_TOKEN = process.env.TAPD_API_TOKEN;
 const DEFAULT_WORKSPACE_ID = process.env.TAPD_WORKSPACE_ID;
+const CURRENT_USER = process.env.TAPD_CURRENT_USER;
 
 if (!API_TOKEN) {
   console.error('Error: TAPD_API_TOKEN environment variable is required');
@@ -449,6 +450,23 @@ const tools: Tool[] = [
       required: ['url'],
     },
   },
+  {
+    name: 'tapd_get_current_user',
+    description:
+      'Get the current TAPD user (the "me" identity behind the API token). ' +
+      'Reads from the TAPD_CURRENT_USER env var as the source of truth. ' +
+      'When workspace_id is provided (or TAPD_WORKSPACE_ID is set), enriches the result ' +
+      'with name/email/role looked up via /users/get_users_by_workspace_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: {
+          type: 'string',
+          description: 'Optional workspace ID to enrich with member details. Falls back to TAPD_WORKSPACE_ID.',
+        },
+      },
+    },
+  },
 ];
 
 function getWorkspaceId(args: Record<string, unknown>): string {
@@ -746,6 +764,32 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
       const parsed = client.parseUrl(args.url as string);
       if (!parsed) throw new Error('Invalid TAPD URL format');
       return parsed;
+    }
+
+    case 'tapd_get_current_user': {
+      if (!CURRENT_USER) {
+        throw new Error(
+          'TAPD_CURRENT_USER env var is not set. ' +
+          'Set it to your TAPD user id (e.g. "xiaopeng_lei") in the MCP server config so I can identify "you".'
+        );
+      }
+      const base: Record<string, unknown> = { user: CURRENT_USER, source: 'env' };
+      const wsId = (args.workspace_id as string) || DEFAULT_WORKSPACE_ID;
+      if (wsId) {
+        try {
+          const members = await client.getWorkspaceUsers(wsId);
+          const match = members.find(
+            m => m.user === CURRENT_USER || m.name === CURRENT_USER || (m as any).nick === CURRENT_USER
+          );
+          if (match) {
+            return { ...base, workspace_id: wsId, matched_in_workspace: true, ...match };
+          }
+          return { ...base, workspace_id: wsId, matched_in_workspace: false };
+        } catch (e) {
+          base.enrich_error = e instanceof Error ? e.message : String(e);
+        }
+      }
+      return base;
     }
 
     default:

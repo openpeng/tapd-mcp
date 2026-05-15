@@ -136,6 +136,16 @@ export interface StoryChange {
   [key: string]: string | undefined;
 }
 
+export interface WorkspaceUser {
+  user: string;
+  name?: string;
+  email?: string;
+  role_id?: string;
+  status?: string;
+  user_group_id?: string;
+  [key: string]: string | undefined;
+}
+
 const STATUS_MAP: Record<string, string> = {
   'planning': 'planning',
   'developing': 'developing',
@@ -842,6 +852,21 @@ export class TapdClient {
     } catch {
       return [];
     }
+  }
+
+  // ==================== User APIs ====================
+
+  async getWorkspaceUsers(workspaceId: string): Promise<WorkspaceUser[]> {
+    const response = await this.request<{ UserWorkspace: WorkspaceUser } | { User: WorkspaceUser }>(
+      'GET',
+      '/users/get_users_by_workspace_id',
+      { workspace_id: workspaceId }
+    );
+
+    return (response.data || []).map((item: any) => {
+      const u = item.UserWorkspace || item.User || item;
+      return u as WorkspaceUser;
+    });
   }
 
   // ==================== Utility Methods ====================

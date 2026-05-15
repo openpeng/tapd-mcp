@@ -47,6 +47,7 @@ npx tapd-mcp
 |----------|----------|-------------|
 | `TAPD_API_TOKEN` | Yes | Your TAPD API token |
 | `TAPD_WORKSPACE_ID` | No | Default workspace ID |
+| `TAPD_CURRENT_USER` | No | Your TAPD user id (e.g. `xiaopeng_lei`). Used by `tapd_get_current_user` so AI assistants can identify "you". |
 
 ### Get Your API Token
 
@@ -257,6 +258,7 @@ If you prefer not to use npx, you can install globally and use the binary path:
 |------|-------------|
 | `tapd_get_story_commits` | Get code commits linked to a story |
 | `tapd_parse_url` | Parse a TAPD URL |
+| `tapd_get_current_user` | Get the current user (the "me" identity behind the API token); requires `TAPD_CURRENT_USER` env var |
 
 ## Examples
 
