@@ -7,6 +7,42 @@ description: 用 TAPD MCP 工具操作 TAPD（腾讯敏捷研发平台）的需�
 
 本 skill 对应 `tapd-mcp` 服务暴露的 25 个工具，覆盖 6 类资源：Story（需求）、Task（任务）、Bug、Iteration（迭代）、Release（发布）、Comment（评论），外加 URL 解析与代码关联。
 
+## 前置检查：工具是否可用
+
+调用任何 `tapd_*` 工具前，先确认 MCP server 已在当前会话注册：
+
+- 当前工具列表里能看到 `tapd_get_story` 等 `tapd_*` 工具 → 已就绪，跳过本节
+- 看不到任何 `tapd_*` 工具，但用户提了 TAPD 相关诉求 → 引导安装，**不要**自己 fetch TAPD API
+
+### 引导用户安装
+
+告诉用户在所用 AI 工具的 MCP 配置文件中加入下面这段（以 Claude Code `~/.claude/settings.json` 为例，Cursor / Windsurf / Cline 写法相同）：
+
+```json
+{
+  "mcpServers": {
+    "tapd": {
+      "command": "npx",
+      "args": ["-y", "tapd-mcp"],
+      "env": {
+        "TAPD_API_TOKEN": "在 https://www.tapd.cn/tapd_api_token/token 申请",
+        "TAPD_WORKSPACE_ID": "可选：默认 workspace id",
+        "TAPD_CURRENT_USER": "可选：你的 TAPD 用户 id，用于识别『我』"
+      }
+    }
+  }
+}
+```
+
+完成后重启 AI 工具或重连 MCP server 即可。
+
+### 故障对照
+
+- 工具调用报 `TAPD_API_TOKEN environment variable is required` → MCP 起来了但 token 没配
+- 报 `Unknown tool: tapd_*` 或工具仍不可见 → 配置没生效，让用户重启 / 重连 MCP
+- 报 `TAPD API error: 401 / 403` → token 失效或越权访问别的 workspace
+- 报 `Invalid TAPD URL` → 链接格式不在 `parseUrl` 支持的三种之内，改用 `workspace_id` + `id`
+
 ## 何时使用
 
 - 用户提供 `tapd.cn/tapd_fe/<wsid>/<type>/detail/<id>` 这类链接

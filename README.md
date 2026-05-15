@@ -72,7 +72,8 @@ Add to your MCP settings file:
       "args": ["-y", "tapd-mcp"],
       "env": {
         "TAPD_API_TOKEN": "your_api_token_here",
-        "TAPD_WORKSPACE_ID": "your_default_workspace_id"
+        "TAPD_WORKSPACE_ID": "your_default_workspace_id",
+        "TAPD_CURRENT_USER": "your_tapd_user_id"
       }
     }
   }
@@ -91,7 +92,8 @@ Add to your Cursor settings (`.cursor/mcp.json` in your project or global settin
       "args": ["-y", "tapd-mcp"],
       "env": {
         "TAPD_API_TOKEN": "your_api_token_here",
-        "TAPD_WORKSPACE_ID": "your_default_workspace_id"
+        "TAPD_WORKSPACE_ID": "your_default_workspace_id",
+        "TAPD_CURRENT_USER": "your_tapd_user_id"
       }
     }
   }
@@ -110,7 +112,8 @@ Add to your Windsurf MCP configuration (`~/.windsurf/mcp.json`):
       "args": ["-y", "tapd-mcp"],
       "env": {
         "TAPD_API_TOKEN": "your_api_token_here",
-        "TAPD_WORKSPACE_ID": "your_default_workspace_id"
+        "TAPD_WORKSPACE_ID": "your_default_workspace_id",
+        "TAPD_CURRENT_USER": "your_tapd_user_id"
       }
     }
   }
@@ -129,7 +132,8 @@ Add to your Cline MCP settings:
       "args": ["-y", "tapd-mcp"],
       "env": {
         "TAPD_API_TOKEN": "your_api_token_here",
-        "TAPD_WORKSPACE_ID": "your_default_workspace_id"
+        "TAPD_WORKSPACE_ID": "your_default_workspace_id",
+        "TAPD_CURRENT_USER": "your_tapd_user_id"
       }
     }
   }
@@ -152,7 +156,8 @@ Add to your Continue config (`~/.continue/config.json`):
         },
         "env": {
           "TAPD_API_TOKEN": "your_api_token_here",
-          "TAPD_WORKSPACE_ID": "your_default_workspace_id"
+          "TAPD_WORKSPACE_ID": "your_default_workspace_id",
+          "TAPD_CURRENT_USER": "your_tapd_user_id"
         }
       }
     ]
@@ -174,7 +179,8 @@ Add to your Zed settings (`~/.config/zed/settings.json`):
       },
       "env": {
         "TAPD_API_TOKEN": "your_api_token_here",
-        "TAPD_WORKSPACE_ID": "your_default_workspace_id"
+        "TAPD_WORKSPACE_ID": "your_default_workspace_id",
+        "TAPD_CURRENT_USER": "your_tapd_user_id"
       }
     }
   }
@@ -192,7 +198,8 @@ If you prefer not to use npx, you can install globally and use the binary path:
       "command": "tapd-mcp",
       "env": {
         "TAPD_API_TOKEN": "your_api_token_here",
-        "TAPD_WORKSPACE_ID": "your_default_workspace_id"
+        "TAPD_WORKSPACE_ID": "your_default_workspace_id",
+        "TAPD_CURRENT_USER": "your_tapd_user_id"
       }
     }
   }
