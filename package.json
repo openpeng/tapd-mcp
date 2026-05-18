@@ -1,11 +1,11 @@
 {
   "name": "tapd-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MCP server for TAPD (Tencent Agile Product Development) - manage stories, tasks, bugs, iterations, and more via AI assistants",
   "main": "dist/index.js",
   "type": "module",
   "bin": {
-    "tapd-mcp": "./dist/index.js"
+    "tapd-mcp": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",

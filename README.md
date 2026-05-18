@@ -45,9 +45,11 @@ npx tapd-mcp
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `TAPD_API_TOKEN` | Yes | Your TAPD API token |
+| `TAPD_API_TOKEN` | Yes (or Basic Auth) | Your TAPD API token (Bearer auth). |
 | `TAPD_WORKSPACE_ID` | No | Default workspace ID |
 | `TAPD_CURRENT_USER` | No | Your TAPD user id (e.g. `xiaopeng_lei`). Used by `tapd_get_current_user` so AI assistants can identify "you". |
+| `TAPD_API_USER` | No | TAPD **API account** username for Basic Auth. Set together with `TAPD_API_PASSWORD` to fall back to Basic Auth (some legacy endpoints, notably attachment upload, may reject Bearer tokens). When both are set, all requests use Basic Auth instead of the Bearer token. |
+| `TAPD_API_PASSWORD` | No | TAPD API account password (paired with `TAPD_API_USER`). |
 
 ### Get Your API Token
 
@@ -206,7 +208,7 @@ If you prefer not to use npx, you can install globally and use the binary path:
 }
 ```
 
-## Available Tools
+## Available Tools (31 total)
 
 ### Story Tools
 
@@ -250,6 +252,28 @@ If you prefer not to use npx, you can install globally and use the binary path:
 |------|-------------|
 | `tapd_list_comments` | List comments on a story/task/bug |
 | `tapd_add_comment` | Add a comment |
+
+### Timesheet Tools
+
+| Tool | Description |
+|------|-------------|
+| `tapd_list_timesheets` | List timesheet (work-log) records, filterable by entity, owner, date range |
+| `tapd_add_timesheet` | Log work hours on a story, task, or bug |
+| `tapd_update_timesheet` | Update an existing timesheet record (requires `timesheets::update` token scope) |
+| `tapd_delete_timesheet` | Delete a timesheet record (requires `timesheets::delete` token scope) |
+
+### Attachment Tools
+
+| Tool | Description |
+|------|-------------|
+| `tapd_list_attachments` | List attachments on a story, task, or bug |
+| `tapd_upload_attachment` | Upload a file/image to a story, task, or bug (multipart, accepts local path or base64) |
+
+### Custom Fields Tools
+
+| Tool | Description |
+|------|-------------|
+| `tapd_get_custom_fields_settings` | Get custom field schema/definitions for a workspace (field names, types, options) |
 
 ### Release Tools
 

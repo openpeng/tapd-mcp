@@ -17,14 +17,23 @@ import { TapdClient } from './tapd-client.js';
 const API_TOKEN = process.env.TAPD_API_TOKEN;
 const DEFAULT_WORKSPACE_ID = process.env.TAPD_WORKSPACE_ID;
 const CURRENT_USER = process.env.TAPD_CURRENT_USER;
+const API_USER = process.env.TAPD_API_USER;
+const API_PASSWORD = process.env.TAPD_API_PASSWORD;
+const ATTACHMENT_ENDPOINT = process.env.TAPD_ATTACHMENT_ENDPOINT;
 
-if (!API_TOKEN) {
-  console.error('Error: TAPD_API_TOKEN environment variable is required');
+const hasBasicAuth = Boolean(API_USER && API_PASSWORD);
+
+if (!API_TOKEN && !hasBasicAuth) {
+  console.error('Error: Set TAPD_API_TOKEN, or both TAPD_API_USER + TAPD_API_PASSWORD for Basic Auth');
   console.error('Get your token from: https://www.tapd.cn/tapd_api_token/token');
   process.exit(1);
 }
 
-const client = new TapdClient({ apiToken: API_TOKEN });
+const client = new TapdClient({
+  apiToken: API_TOKEN || '',
+  basicAuth: hasBasicAuth ? { username: API_USER!, password: API_PASSWORD! } : undefined,
+  attachmentEndpoint: ATTACHMENT_ENDPOINT,
+});
 
 const tools: Tool[] = [
   // ==================== Story Tools ====================
@@ -208,6 +217,11 @@ const tools: Tool[] = [
           description: 'Completion percentage 0-100, e.g. "50"',
         },
         iteration_id: { type: 'string', description: 'Move to a different iteration' },
+        completed: {
+          type: 'string',
+          description:
+            'Completion datetime, "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS". Pass to override TAPD\'s auto-fill of "now" when status flips to done.',
+        },
       },
       required: ['workspace_id', 'task_id'],
     },
@@ -371,6 +385,168 @@ const tools: Tool[] = [
         description: { type: 'string', description: 'Comment content' },
       },
       required: ['workspace_id', 'entry_type', 'entry_id', 'description'],
+    },
+  },
+
+  // ==================== Attachment Tools ====================
+  {
+    name: 'tapd_upload_attachment',
+    description:
+      'Upload a file or image to a TAPD story, task, or bug via /files/upload_attachment. ' +
+      'Provide either `file_path` (a local path the MCP server can read) or `file_base64` ' +
+      '(base64-encoded bytes; requires `filename`). ' +
+      'By default the file is attached to the entity\'s "Attachments" section. ' +
+      'Pass `custom_field` (e.g. "custom_field_one") to instead embed the file into a ' +
+      'rich-text custom field (TAPD treats this as `<type>_custom_field` upload).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        entity_type: {
+          type: 'string',
+          enum: ['stories', 'tasks', 'bugs'],
+          description: 'Target entity type (mapped internally to TAPD `type` = story/task/bug)',
+        },
+        entity_id: { type: 'string', description: 'ID of the story/task/bug to attach to' },
+        file_path: {
+          type: 'string',
+          description: 'Absolute or relative local path to the file. Mutually exclusive with file_base64.',
+        },
+        file_base64: {
+          type: 'string',
+          description: 'Base64-encoded file content (no data: prefix). Requires `filename`. Mutually exclusive with file_path.',
+        },
+        filename: {
+          type: 'string',
+          description: 'Override the upload filename. Required when using file_base64; optional when using file_path (defaults to the basename).',
+        },
+        description: { type: 'string', description: 'Optional attachment description' },
+        content_type: {
+          type: 'string',
+          description: 'Optional MIME type (e.g. "image/png"). TAPD usually infers from the filename, so omit unless needed.',
+        },
+        custom_field: {
+          type: 'string',
+          description: 'Optional. English name of a rich-text custom field (e.g. "custom_field_one"). When set, the file is embedded into that custom field instead of the attachment list.',
+        },
+        owner: {
+          type: 'string',
+          description: 'Optional attachment creator (TAPD `owner` field). Defaults to the API token holder.',
+        },
+      },
+      required: ['entity_type', 'entity_id'],
+    },
+  },
+
+  // ==================== Timesheet Tools ====================
+  {
+    name: 'tapd_list_timesheets',
+    description: 'List timesheets (work-log records) for a workspace, optionally filtered by entity (story/task/bug), owner, or date range.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        entity_type: {
+          type: 'string',
+          enum: ['stories', 'tasks', 'bugs'],
+          description: 'Filter by entity type (plural form, e.g. "stories")',
+        },
+        entity_id: { type: 'string', description: 'Filter by specific story/task/bug ID' },
+        owner: { type: 'string', description: 'Filter by owner (TAPD user id)' },
+        spentdate: { type: 'string', description: 'Filter by exact date YYYY-MM-DD' },
+        start_date: { type: 'string', description: 'Range start date YYYY-MM-DD (inclusive)' },
+        end_date: { type: 'string', description: 'Range end date YYYY-MM-DD (inclusive)' },
+        limit: { type: 'number', description: 'Max results (default 30)' },
+        page: { type: 'number', description: 'Page number (default 1)' },
+      },
+      required: ['workspace_id'],
+    },
+  },
+  {
+    name: 'tapd_add_timesheet',
+    description: 'Add a timesheet record (log work hours) to a story, task, or bug.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        entity_type: {
+          type: 'string',
+          enum: ['stories', 'tasks', 'bugs'],
+          description: 'Target entity type (plural, e.g. "tasks")',
+        },
+        entity_id: { type: 'string', description: 'Story/task/bug ID to log time on' },
+        timespent: { type: 'string', description: 'Hours spent, e.g. "2" or "1.5"' },
+        spentdate: { type: 'string', description: 'Date of work YYYY-MM-DD, e.g. "2025-05-15"' },
+        owner: { type: 'string', description: 'TAPD user id of the person who did the work (defaults to token holder)' },
+        memo: { type: 'string', description: 'Optional note / description for this time log' },
+      },
+      required: ['workspace_id', 'entity_type', 'entity_id', 'timespent', 'spentdate'],
+    },
+  },
+  {
+    name: 'tapd_update_timesheet',
+    description: 'Update an existing timesheet record. Requires timesheets::update permission on the API token.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        timesheet_id: { type: 'string', description: 'Timesheet record ID to update' },
+        timespent: { type: 'string', description: 'New hours value' },
+        spentdate: { type: 'string', description: 'New date YYYY-MM-DD' },
+        owner: { type: 'string', description: 'New owner (TAPD user id)' },
+        memo: { type: 'string', description: 'New memo / note' },
+      },
+      required: ['workspace_id', 'timesheet_id'],
+    },
+  },
+  {
+    name: 'tapd_delete_timesheet',
+    description: 'Delete a timesheet record. Requires timesheets::delete permission on the API token.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        timesheet_id: { type: 'string', description: 'Timesheet record ID to delete' },
+      },
+      required: ['workspace_id', 'timesheet_id'],
+    },
+  },
+
+  // ==================== Attachment List Tool ====================
+  {
+    name: 'tapd_list_attachments',
+    description: 'List attachments on a story, task, or bug.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        entity_type: {
+          type: 'string',
+          enum: ['stories', 'tasks', 'bugs'],
+          description: 'Entity type (plural)',
+        },
+        entity_id: { type: 'string', description: 'Story/task/bug ID' },
+        limit: { type: 'number', description: 'Max results (default 30)' },
+        page: { type: 'number', description: 'Page number (default 1)' },
+      },
+      required: ['workspace_id', 'entity_type', 'entity_id'],
+    },
+  },
+
+  // ==================== Custom Fields Settings Tool ====================
+  {
+    name: 'tapd_get_custom_fields_settings',
+    description: 'Get custom field schema / definitions for stories (or other entry types) in a workspace. Useful for discovering available custom field names and their types/options before reading or writing custom fields.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        entry_type: {
+          type: 'string',
+          description: 'Entry type to query custom fields for. Defaults to "story".',
+        },
+      },
+      required: ['workspace_id'],
     },
   },
 
@@ -617,6 +793,7 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
         exceed: args.exceed as string,
         progress: args.progress as string,
         iterationId: args.iteration_id as string,
+        completed: args.completed as string,
       });
     }
 
@@ -719,6 +896,102 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
         args.entry_type as 'stories' | 'tasks' | 'bugs',
         args.entry_id as string,
         args.description as string
+      );
+    }
+
+    // Timesheet handlers
+    case 'tapd_list_timesheets': {
+      return await client.listTimesheets(getWorkspaceId(args), {
+        entityType: args.entity_type as string,
+        entityId: args.entity_id as string,
+        owner: args.owner as string,
+        spentdate: args.spentdate as string,
+        startDate: args.start_date as string,
+        endDate: args.end_date as string,
+        limit: args.limit as number,
+        page: args.page as number,
+      });
+    }
+
+    case 'tapd_add_timesheet': {
+      return await client.addTimesheet(getWorkspaceId(args), {
+        entityType: args.entity_type as string,
+        entityId: args.entity_id as string,
+        timespent: args.timespent as string,
+        spentdate: args.spentdate as string,
+        owner: args.owner as string,
+        memo: args.memo as string,
+      });
+    }
+
+    case 'tapd_update_timesheet': {
+      return await client.updateTimesheet(
+        getWorkspaceId(args),
+        args.timesheet_id as string,
+        {
+          timespent: args.timespent as string,
+          spentdate: args.spentdate as string,
+          owner: args.owner as string,
+          memo: args.memo as string,
+        }
+      );
+    }
+
+    case 'tapd_delete_timesheet': {
+      return await client.deleteTimesheet(
+        getWorkspaceId(args),
+        args.timesheet_id as string
+      );
+    }
+
+    // Attachment handlers
+    case 'tapd_list_attachments': {
+      return await client.listAttachments(
+        getWorkspaceId(args),
+        args.entity_type as 'stories' | 'tasks' | 'bugs',
+        args.entity_id as string,
+        { limit: args.limit as number, page: args.page as number }
+      );
+    }
+
+    case 'tapd_upload_attachment': {
+      const filePath = args.file_path as string | undefined;
+      const fileBase64 = args.file_base64 as string | undefined;
+      const filename = args.filename as string | undefined;
+
+      if (!filePath && !fileBase64) {
+        throw new Error('Either file_path or file_base64 is required');
+      }
+      if (filePath && fileBase64) {
+        throw new Error('Provide only one of file_path or file_base64, not both');
+      }
+      if (fileBase64 && !filename) {
+        throw new Error('filename is required when uploading via file_base64');
+      }
+
+      const source = filePath
+        ? { filePath, filename }
+        : { data: Buffer.from(fileBase64 as string, 'base64'), filename };
+
+      return await client.uploadAttachment(
+        getWorkspaceId(args),
+        args.entity_type as 'stories' | 'tasks' | 'bugs',
+        args.entity_id as string,
+        source,
+        {
+          description: args.description as string,
+          contentType: args.content_type as string,
+          customField: args.custom_field as string,
+          owner: args.owner as string,
+        }
+      );
+    }
+
+    // Custom fields settings handler
+    case 'tapd_get_custom_fields_settings': {
+      return await client.getCustomFieldsSettings(
+        getWorkspaceId(args),
+        (args.entry_type as string) || 'story'
       );
     }
 

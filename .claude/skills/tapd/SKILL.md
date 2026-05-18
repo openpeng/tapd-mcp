@@ -1,11 +1,48 @@
 ---
 name: tapd
-description: 用 TAPD MCP 工具操作 TAPD（腾讯敏捷研发平台）的需求/任务/缺陷/迭代/评论/发布。当用户要求查看、创建、修改 TAPD story/task/bug/iteration/release/comment，或贴出 tapd.cn 链接要求处理时调用。覆盖 24 个 `tapd_*` 工具，并给出字段裁剪、状态枚举、URL 解析、工时填写等关键约定。
+description: 用 TAPD MCP 工具操作 TAPD（腾讯敏捷研发平台）的需求/任务/缺陷/迭代/评论/发布/工时/附件/自定义字段。当用户要求查看、创建、修改 TAPD story/task/bug/iteration/release/comment/timesheet，或贴出 tapd.cn 链接要求处理时调用。覆盖 31 个 `tapd_*` 工具，并给出字段裁剪、状态枚举、URL 解析、工时填写等关键约定。
 ---
 
 # TAPD 操作说明
 
-本 skill 对应 `tapd-mcp` 服务暴露的 24 个工具，覆盖 6 类资源：Story（需求）、Task（任务）、Bug、Iteration（迭代）、Release（发布）、Comment（评论），外加 URL 解析与代码关联。
+本 skill 对应 `tapd-mcp` 服务暴露的 **31 个**工具，覆盖 8 类资源：Story（需求）、Task（任务）、Bug、Iteration（迭代）、Release（发布）、Comment（评论）、Timesheet（工时记录）、Attachment（附件），外加自定义字段查询、URL 解析与代码关联。
+
+## 前置检查：工具是否可用
+
+调用任何 `tapd_*` 工具前，先确认 MCP server 已在当前会话注册：
+
+- 当前工具列表里能看到 `tapd_get_story` 等 `tapd_*` 工具 → 已就绪，跳过本节
+- 看不到任何 `tapd_*` 工具，但用户提了 TAPD 相关诉求 → 引导安装，**不要**自己 fetch TAPD API
+
+### 引导用户安装
+
+告诉用户在所用 AI 工具的 MCP 配置文件中加入下面这段（以 Claude Code `~/.claude/settings.json` 为例，Cursor / Windsurf / Cline 写法相同）：
+
+```json
+{
+  "mcpServers": {
+    "tapd": {
+      "command": "npx",
+      "args": ["-y", "tapd-mcp"],
+      "env": {
+        "TAPD_API_TOKEN": "在 https://www.tapd.cn/tapd_api_token/token 申请",
+        "TAPD_WORKSPACE_ID": "可选：默认 workspace id",
+        "TAPD_CURRENT_USER": "可选：你的 TAPD 用户 id，用于识别『我』"
+      }
+    }
+  }
+}
+```
+
+完成后重启 AI 工具或重连 MCP server 即可。
+
+### 故障对照
+
+- 工具调用报 `TAPD_API_TOKEN environment variable is required` → MCP 起来了但 token 没配
+- 报 `Unknown tool: tapd_*` 或工具仍不可见 → 配置没生效，让用户重启 / 重连 MCP
+- 报 `TAPD API error [/endpoint]: HTTP 401 / 403` → token 失效或越权访问别的 workspace
+- 报 `Invalid TAPD URL` → 链接格式不在 `parseUrl` 支持的三种之内，改用 `workspace_id` + `id`
+- `tapd_update_timesheet` / `tapd_delete_timesheet` 报 403 → token 缺 `timesheets::update` / `timesheets::delete` 权限，去 TAPD API Token 管理页补开
 
 ## 何时使用
 
@@ -13,7 +50,7 @@ description: 用 TAPD MCP 工具操作 TAPD（腾讯敏捷研发平台）的需�
 - 用户提到 TAPD、需求/故事、迭代、bug、缺陷、任务认领、工时、评审、发布列车等
 - 用户要求"查/列/建/改"上述资源；纯阅读优先 `get_*` / `list_*`，写操作前要先理解 ID
 
-## 工具速查表
+## 工具速查表（共 31 个）
 
 | 资源 | 读 | 写 |
 |------|------|------|
@@ -23,7 +60,10 @@ description: 用 TAPD MCP 工具操作 TAPD（腾讯敏捷研发平台）的需�
 | Iteration | `tapd_get_iteration`, `tapd_list_iterations` | `tapd_create_iteration`, `tapd_update_iteration` |
 | Release | `tapd_list_releases` | `tapd_create_release`, `tapd_update_release` |
 | Comment | `tapd_list_comments` | `tapd_add_comment` |
-| Util | `tapd_parse_url` | — |
+| Timesheet | `tapd_list_timesheets` | `tapd_add_timesheet`, `tapd_update_timesheet`, `tapd_delete_timesheet` |
+| Attachment | `tapd_list_attachments` | `tapd_upload_attachment` |
+| Custom Fields | `tapd_get_custom_fields_settings` | — |
+| Util | `tapd_parse_url`, `tapd_get_current_user` | — |
 
 ## 通用约定
 
@@ -32,6 +72,12 @@ description: 用 TAPD MCP 工具操作 TAPD（腾讯敏捷研发平台）的需�
 - 大多数工具都要 `workspace_id`。环境变量 `TAPD_WORKSPACE_ID` 存在时可省略，否则必填。
 - 给 URL 时（仅 `tapd_get_story` / `tapd_get_task` / `tapd_get_bug` 支持 `url` 参数），可以不提供 `workspace_id`，会从 URL 解析。
 - 不知道 wsid 又没默认值时，先 `tapd_parse_url` 把链接拆出来。
+
+### 识别"我"是谁
+
+- `tapd_get_current_user` 返回 API token 持有者的身份；依赖环境变量 `TAPD_CURRENT_USER`（值为 TAPD 用户 ID，如 `xiaopeng_lei`）。
+- 不传参就只回 env 值；传 `workspace_id`（或回退默认值）会去 `/users/get_users_by_workspace_id` 拉昵称、邮箱等附加信息。
+- 用户问"我负责的"、"我创建的"、"分配给我"这类相对身份的问题时，先调一次此工具拿到自己的 user id，再当作 `owner` / `creator` / `current_owner` 过滤参数。
 
 ### fields 字段裁剪（仅 Story 的 get/list）
 
@@ -112,6 +158,24 @@ tapd_update_task workspace_id="..." task_id="..." status="done" effort_completed
 tapd_add_comment workspace_id="..." entry_type="stories" entry_id="..." description="代码评审通过，已合并到 dev"
 ```
 
+### 4.1 上传附件 / 截图
+
+`tapd_upload_attachment` 用 multipart 把本地文件挂到 story / task / bug，`entity_type` 同样取复数 `stories` / `tasks` / `bugs`。两种喂法二选一：
+
+- 给本地路径（最常见，AI 能直接读到的文件）：
+
+```
+tapd_upload_attachment workspace_id="..." entity_type="bugs" entity_id="..." file_path="C:/screenshots/login_crash.png" description="iOS Safari 闪退现场"
+```
+
+- 给 base64 内容（适合 AI 把内存里的图直接扔上去），此时 `filename` 必填：
+
+```
+tapd_upload_attachment entity_type="stories" entity_id="..." file_base64="iVBORw0KGgo..." filename="design.png" content_type="image/png"
+```
+
+`file_path` 与 `file_base64` 互斥；`content_type` 一般可省略，TAPD 会按扩展名识别。返回值含附件 `id` / `download_url`，需要展示给用户时回贴这两个字段即可。
+
 ### 5. 创建 Story / Bug
 
 Story 必填 `name`；Bug 必填 `title`。`description` 支持 HTML。`owner` 多人用分号分隔。
@@ -120,7 +184,48 @@ Story 必填 `name`；Bug 必填 `title`。`description` 支持 HTML。`owner` �
 tapd_create_bug workspace_id="..." title="登录页 iOS Safari 闪退" severity="serious" current_owner="lisi" version_report="3.2.0" module="auth"
 ```
 
-### 6. 关联代码提交
+### 6. 工时记录（Timesheet）
+
+TAPD 工时通过 `timespent`（小时数，字符串形式）+ `spentdate`（YYYY-MM-DD）+ `entity_type`/`entity_id` 四元组定位一条记录。
+
+**查询指定日期的工时：**
+
+```
+tapd_list_timesheets workspace_id="..." entity_type="tasks" entity_id="..." spentdate="2025-05-15"
+```
+
+**按日期范围查询：**
+
+```
+tapd_list_timesheets workspace_id="..." owner="xiaopeng_lei" start_date="2025-05-01" end_date="2025-05-31"
+```
+
+**新增工时记录：**
+
+```
+tapd_add_timesheet workspace_id="..." entity_type="tasks" entity_id="..." timespent="2" spentdate="2025-05-15" owner="xiaopeng_lei" memo="完成接口设计"
+```
+
+**更新 / 删除工时**（需要 API token 拥有 `timesheets::update` / `timesheets::delete` 权限，否则返回 403）：
+
+```
+tapd_update_timesheet workspace_id="..." timesheet_id="..." timespent="3" spentdate="2025-05-15"
+tapd_delete_timesheet workspace_id="..." timesheet_id="..."
+```
+
+> **注意：** TAPD 平台上的工时权限独立于普通读写权限。若 update/delete 报 `403`，请到 TAPD 个人 API Token 管理页为该 token 开启 `timesheets::update` / `timesheets::delete` 权限。
+
+### 7. 查询自定义字段
+
+在读写 story 自定义字段前，先查 schema 了解字段名、类型和选项：
+
+```
+tapd_get_custom_fields_settings workspace_id="..." entry_type="story"
+```
+
+返回结果包含 `field_name`（API 字段名，如 `custom_field_one`）、`field_label`（中文标签）、`field_type`（文本/下拉等）、`options`（枚举选项）。
+
+### 8. 关联代码提交
 
 `tapd_get_story_commits` 拉取 story 关联的 git 提交（依赖 TAPD 仓库托管侧已对接）。无关联时返回空数组而不是报错。
 
@@ -136,9 +241,11 @@ tapd_create_bug workspace_id="..." title="登录页 iOS Safari 闪退" severity=
 
 - `tapd_list_stories` 的 `status` 过滤只接受英文 key，传中文不会报错但筛不到东西。
 - `fields="*"` 会塞回 ~260 列，连续在循环里拉容易把上下文撑爆——只在单条详情里用。
-- `effort` / `effort_completed` 必须是字符串形式的数字（`"8"` / `"8.5"`），别传 number。
+- `effort` / `effort_completed` / `timespent` 必须是字符串形式的数字（`"8"` / `"8.5"`），别传 number。
 - URL 解析失败会抛 `Invalid TAPD URL`，遇到非标准链接（短链、复制时被截断）改用显式 `workspace_id` + `id`。
 - 未配置 `TAPD_API_TOKEN` 时 server 起不来；token 可在 `https://www.tapd.cn/tapd_api_token/token` 获取。
+- **中文路径上传附件**：`tapd_upload_attachment` 的 `file_path` 传中文路径时，MCP server 内部用 Node.js `fs.readFile` 读取，**没有问题**。但如果你用 Bash `curl -F file=@路径` 手动测试，Windows 下 `curl` 默认 locale 为 ANSI，**中文路径会读到空文件，导致 TAPD 静默接受 0 字节附件**。此时应把文件复制到 ASCII 路径，或改用 `tapd_upload_attachment` MCP 工具本身。
+- `tapd_update_timesheet` / `tapd_delete_timesheet` 需要 API token 额外勾选 `timesheets::update` / `timesheets::delete` 权限；缺失时返回 403，需登录 TAPD 管理页补权限。
 
 ## 一句话决策
 
@@ -147,3 +254,6 @@ tapd_create_bug workspace_id="..." title="登录页 iOS Safari 闪退" severity=
 - "完整展开" → `get_story` + `fields="*"`，单条用
 - "写入" → 先核对 ID，状态用英文 key，工时用字符串
 - "拿到的是链接" → 三个 `get_*` 直接接 `url`，否则先 `tapd_parse_url`
+- "记工时" → `tapd_add_timesheet`，先 `tapd_list_timesheets` 确认无重复
+- "看附件" → `tapd_list_attachments`
+- "了解自定义字段" → `tapd_get_custom_fields_settings`

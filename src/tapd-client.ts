@@ -2,9 +2,38 @@
  * TAPD API Client - Handles all HTTP requests to TAPD Open API
  */
 
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
+
 export interface TapdConfig {
   apiToken: string;
   baseUrl?: string;
+  /**
+   * Optional Basic Auth credentials. When provided, takes precedence over
+   * the Bearer token for all requests. Some legacy TAPD endpoints
+   * (notably attachments) may reject Bearer auth and require Basic.
+   */
+  basicAuth?: { username: string; password: string };
+  /**
+   * Override the attachment upload endpoint path. Defaults to
+   * `/files/upload_attachment` (the documented TAPD endpoint).
+   */
+  attachmentEndpoint?: string;
+}
+
+export interface Attachment {
+  id: string;
+  workspace_id: string;
+  entity_type: string;
+  entity_id: string;
+  filename: string;
+  filesize?: string;
+  filetype?: string;
+  download_url?: string;
+  description?: string;
+  owner?: string;
+  created?: string;
+  [key: string]: string | undefined;
 }
 
 export interface TapdResponse<T> {
@@ -124,6 +153,32 @@ export interface Release {
   [key: string]: string | undefined;
 }
 
+export interface Timesheet {
+  id: string;
+  workspace_id: string;
+  entity_type: string;
+  entity_id: string;
+  owner?: string;
+  spentdate?: string;
+  timespent?: string;
+  memo?: string;
+  created?: string;
+  modified?: string;
+  [key: string]: string | undefined;
+}
+
+export interface CustomFieldSetting {
+  workspace_id?: string;
+  entry_type?: string;
+  field_name?: string;
+  field_type?: string;
+  field_label?: string;
+  required?: string;
+  options?: string;
+  is_open?: string;
+  [key: string]: string | undefined;
+}
+
 export interface StoryChange {
   id: string;
   story_id: string;
@@ -191,10 +246,22 @@ const BUG_STATUS_MAP: Record<string, string> = {
 export class TapdClient {
   private apiToken: string;
   private baseUrl: string;
+  private basicAuth?: { username: string; password: string };
+  private attachmentEndpoint: string;
 
   constructor(config: TapdConfig) {
     this.apiToken = config.apiToken;
     this.baseUrl = config.baseUrl || 'https://api.tapd.cn';
+    this.basicAuth = config.basicAuth;
+    this.attachmentEndpoint = config.attachmentEndpoint || '/files/upload_attachment';
+  }
+
+  private buildAuthHeader(): string {
+    if (this.basicAuth) {
+      const raw = `${this.basicAuth.username}:${this.basicAuth.password}`;
+      return `Basic ${Buffer.from(raw, 'utf8').toString('base64')}`;
+    }
+    return `Bearer ${this.apiToken}`;
   }
 
   private async request<T>(
@@ -214,7 +281,7 @@ export class TapdClient {
     }
 
     const headers: Record<string, string> = {
-      'Authorization': `Bearer ${this.apiToken}`,
+      'Authorization': this.buildAuthHeader(),
       'Accept': 'application/json',
       'User-Agent': 'TAPD-MCP-Server/1.0',
     };
@@ -235,13 +302,14 @@ export class TapdClient {
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`TAPD API error: ${response.status} ${response.statusText} - ${text}`);
+      throw new Error(`TAPD API error [${endpoint}]: HTTP ${response.status} ${response.statusText} - ${text}`);
     }
 
     const data = await response.json();
 
     if (data.status !== 1) {
-      throw new Error(`TAPD API error: ${data.info || 'Unknown error'}`);
+      const info = data.info || data.message || 'Unknown error';
+      throw new Error(`TAPD API error [${endpoint}]: ${info}`);
     }
 
     // Normalize response: POST returns {data: {Story: ...}}, GET returns {data: [{Story: ...}]}
@@ -478,6 +546,7 @@ export class TapdClient {
       exceed?: string;
       progress?: string;
       iterationId?: string;
+      completed?: string;
     }
   ): Promise<Task> {
     const response = await this.request<{ Task: Task }>('POST', '/tasks', {
@@ -496,6 +565,7 @@ export class TapdClient {
       exceed: data.exceed,
       progress: data.progress,
       iteration_id: data.iterationId,
+      completed: data.completed,
     });
 
     if (!response.data || response.data.length === 0) {
@@ -867,6 +937,251 @@ export class TapdClient {
       const u = item.UserWorkspace || item.User || item;
       return u as WorkspaceUser;
     });
+  }
+
+  // ==================== Attachment APIs ====================
+
+  async uploadAttachment(
+    workspaceId: string,
+    entityType: 'stories' | 'tasks' | 'bugs',
+    entityId: string,
+    source: { filePath?: string; data?: Buffer | Uint8Array; filename?: string },
+    options?: { description?: string; contentType?: string; customField?: string; owner?: string }
+  ): Promise<Attachment> {
+    let buffer: Buffer | Uint8Array;
+    let name: string;
+
+    if (source.filePath) {
+      buffer = await readFile(source.filePath);
+      name = source.filename || basename(source.filePath);
+    } else if (source.data) {
+      buffer = source.data;
+      name = source.filename || 'upload.bin';
+    } else {
+      throw new Error('uploadAttachment requires either filePath or data');
+    }
+
+    const blob = new Blob([new Uint8Array(buffer)], options?.contentType ? { type: options.contentType } : undefined);
+
+    // Map plural entity_type ('stories'/'tasks'/'bugs') to TAPD's singular `type`
+    // ('story'/'task'/'bug'). When customField is provided, the type becomes
+    // '<base>_custom_field' to attach into a rich-text custom field.
+    const baseType = entityType.endsWith('s') ? entityType.slice(0, -1) : entityType;
+    const tapdType = options?.customField ? `${baseType}_custom_field` : baseType;
+
+    const form = new FormData();
+    form.append('workspace_id', workspaceId);
+    form.append('type', tapdType);
+    form.append('entry_id', entityId);
+    form.append('file', blob, name);
+    if (options?.customField) form.append('custom_field', options.customField);
+    if (options?.owner) form.append('owner', options.owner);
+    if (options?.description) form.append('description', options.description);
+
+    const endpoint = new URL(this.attachmentEndpoint, this.baseUrl).toString();
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Authorization': this.buildAuthHeader(),
+        'Accept': 'application/json',
+        'User-Agent': 'TAPD-MCP-Server/1.0',
+      },
+      body: form,
+    });
+
+    const rawBody = await response.text();
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(rawBody);
+    } catch {
+      // body may be empty (TAPD returns empty body on success) or HTML on error
+    }
+
+    if (!response.ok) {
+      const apiInfo = parsed?.info || parsed?.msg;
+      const apiStatus = parsed?.status;
+      const detail = apiInfo
+        ? `info="${apiInfo}"${apiStatus !== undefined ? ` status=${apiStatus}` : ''}`
+        : rawBody.slice(0, 500);
+      throw new Error(
+        `TAPD attachment upload failed: HTTP ${response.status} ${response.statusText} ` +
+        `endpoint=${endpoint} type=${tapdType} entry_id=${entityId} :: ${detail}`
+      );
+    }
+
+    // TAPD's POST /files/upload_attachment returns HTTP 200. The response
+    // shape varies: when type=story_custom_field is used or when the call hits
+    // an empty/legacy code path, the body may be empty; on a normal main-body
+    // attach it returns {status:1, data:{Attachment:{...}}}. Prefer the inline
+    // Attachment if present, otherwise fall back to GET /attachments.
+    if (parsed && parsed.status !== 1 && parsed.status !== undefined) {
+      throw new Error(
+        `TAPD attachment upload rejected: status=${parsed.status} info="${parsed.info || 'Unknown error'}" ` +
+        `endpoint=${endpoint} type=${tapdType} entry_id=${entityId}`
+      );
+    }
+
+    if (parsed?.status === 1 && parsed.data) {
+      const payload = Array.isArray(parsed.data) ? parsed.data[0] : parsed.data;
+      const direct = payload?.Attachment || payload;
+      if (direct && direct.id) {
+        return direct as Attachment;
+      }
+    }
+
+    try {
+      const list = await this.request<{ Attachment: Attachment }>('GET', '/attachments', {
+        workspace_id: workspaceId,
+        entry_id: entityId,
+        limit: 50,
+      });
+      const items = (list.data || []).map(it => it.Attachment).filter(Boolean);
+      const matched = items
+        .filter(a => a && (a.filename === name))
+        .sort((a, b) => (b.created || '').localeCompare(a.created || ''));
+      if (matched.length > 0) return matched[0];
+      // fallback: newest by created if filename match fails (e.g. server-side rename)
+      const newest = items.sort((a, b) => (b.created || '').localeCompare(a.created || ''))[0];
+      if (newest) return newest;
+    } catch {
+      // GET fallback failed; fall through to synthesised result
+    }
+
+    return {
+      id: '',
+      workspace_id: workspaceId,
+      entity_type: entityType,
+      entity_id: entityId,
+      filename: name,
+    } as Attachment;
+  }
+
+  // ==================== Timesheet APIs ====================
+
+  async listTimesheets(
+    workspaceId: string,
+    options?: {
+      entityType?: string;
+      entityId?: string;
+      owner?: string;
+      spentdate?: string;
+      startDate?: string;
+      endDate?: string;
+      limit?: number;
+      page?: number;
+    }
+  ): Promise<Timesheet[]> {
+    const params: Record<string, string | number | undefined> = {
+      workspace_id: workspaceId,
+      entity_type: options?.entityType,
+      entity_id: options?.entityId,
+      owner: options?.owner,
+      limit: options?.limit || 30,
+      page: options?.page || 1,
+    };
+    if (options?.startDate || options?.endDate) {
+      // TAPD supports spentdate[_gte]/[_lte] for range queries
+      if (options.startDate) params['spentdate[_gte]'] = options.startDate;
+      if (options.endDate) params['spentdate[_lte]'] = options.endDate;
+    } else if (options?.spentdate) {
+      params.spentdate = options.spentdate;
+    }
+    const response = await this.request<{ Timesheet: Timesheet }>('GET', '/timesheets', params);
+    return (response.data || []).map(item => item.Timesheet);
+  }
+
+  async addTimesheet(
+    workspaceId: string,
+    data: {
+      entityType: string;
+      entityId: string;
+      timespent: string;
+      spentdate: string;
+      owner?: string;
+      memo?: string;
+    }
+  ): Promise<Timesheet> {
+    const response = await this.request<{ Timesheet: Timesheet }>('POST', '/timesheets', {
+      workspace_id: workspaceId,
+      entity_type: data.entityType,
+      entity_id: data.entityId,
+      timespent: data.timespent,
+      spentdate: data.spentdate,
+      owner: data.owner,
+      memo: data.memo,
+    });
+
+    if (!response.data || response.data.length === 0) {
+      throw new Error('Failed to add timesheet: no data returned');
+    }
+    return response.data[0].Timesheet;
+  }
+
+  async updateTimesheet(
+    workspaceId: string,
+    timesheetId: string,
+    data: {
+      timespent?: string;
+      spentdate?: string;
+      owner?: string;
+      memo?: string;
+    }
+  ): Promise<Timesheet> {
+    const response = await this.request<{ Timesheet: Timesheet }>('POST', '/timesheets/update', {
+      workspace_id: workspaceId,
+      id: timesheetId,
+      timespent: data.timespent,
+      spentdate: data.spentdate,
+      owner: data.owner,
+      memo: data.memo,
+    });
+
+    if (!response.data || response.data.length === 0) {
+      throw new Error('Failed to update timesheet: no data returned');
+    }
+    return response.data[0].Timesheet;
+  }
+
+  async deleteTimesheet(workspaceId: string, timesheetId: string): Promise<boolean> {
+    await this.request('POST', '/timesheets/delete', {
+      workspace_id: workspaceId,
+      id: timesheetId,
+    });
+    return true;
+  }
+
+  // ==================== Attachment List API ====================
+
+  async listAttachments(
+    workspaceId: string,
+    entityType: 'stories' | 'tasks' | 'bugs',
+    entityId: string,
+    options?: { limit?: number; page?: number }
+  ): Promise<Attachment[]> {
+    // TAPD /attachments uses singular type for filter
+    const tapdType = entityType.endsWith('s') ? entityType.slice(0, -1) : entityType;
+    const response = await this.request<{ Attachment: Attachment }>('GET', '/attachments', {
+      workspace_id: workspaceId,
+      entry_type: tapdType,
+      entry_id: entityId,
+      limit: options?.limit || 30,
+      page: options?.page || 1,
+    });
+    return (response.data || []).map(item => item.Attachment).filter(Boolean);
+  }
+
+  // ==================== Custom Fields Settings API ====================
+
+  async getCustomFieldsSettings(
+    workspaceId: string,
+    entryType = 'story'
+  ): Promise<CustomFieldSetting[]> {
+    const response = await this.request<{ CustomFieldSetting: CustomFieldSetting }>(
+      'GET',
+      '/stories/custom_fields_settings',
+      { workspace_id: workspaceId, entry_type: entryType }
+    );
+    return (response.data || []).map(item => item.CustomFieldSetting).filter(Boolean);
   }
 
   // ==================== Utility Methods ====================
