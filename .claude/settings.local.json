@@ -3,7 +3,31 @@
     "allow": [
       "Bash(mkdir -p \"F:/mycode/mcp-servers/tapd-mcp/.claude/skills/tapd\")",
       "Bash(npm run *)",
-      "Bash(npm pack *)"
+      "Bash(npm pack *)",
+      "WebFetch(domain:open.tapd.cn)",
+      "Bash(git -C F:/mycode/mcp-servers/tapd-mcp status)",
+      "Bash(git -C F:/mycode/mcp-servers/tapd-mcp diff --stat)",
+      "Bash(git -C F:/mycode/mcp-servers/tapd-mcp log --oneline -5)",
+      "Bash(git -C F:/mycode/mcp-servers/tapd-mcp remote -v)",
+      "Bash(git -C F:/mycode/mcp-servers/tapd-mcp diff .claude/settings.local.json)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "mcp__tapd__tapd_list_iterations",
+      "mcp__tapd__tapd_get_current_user",
+      "mcp__tapd__tapd_list_stories",
+      "mcp__tapd__tapd_create_task",
+      "mcp__tapd__tapd_get_task",
+      "mcp__tapd__tapd_create_story",
+      "mcp__tapd__tapd_update_story",
+      "mcp__tapd__tapd_upload_attachment",
+      "Bash(export TAPD_API_TOKEN='17a0225cbf7feb30512862681ad2ac0cec9676e8')",
+      "Bash(curl -sS -i 'https://api.tapd.cn/attachments?workspace_id=37748852&entity_type=stories&entity_id=1137748852001375598' -H 'Authorization: Bearer 17a0225cbf7feb30512862681ad2ac0cec9676e8' --max-time 20)",
+      "Bash(curl -sS -i -X POST https://api.tapd.cn/files/upload_attachment -H 'Authorization: Bearer 17a0225cbf7feb30512862681ad2ac0cec9676e8' -F workspace_id=37748852 -F type=story -F entry_id=1137748852001375598 -F file=@E:/企业微信doc/WXWork/1688852503520108/Cache/Image/2026-05/企业微信截图_17788308826075.png --max-time 30)",
+      "Bash(curl -sS -X POST https://api.tapd.cn/files/upload_attachment -H 'Authorization: Bearer 17a0225cbf7feb30512862681ad2ac0cec9676e8' -F workspace_id=37748852 -F type=story -F entry_id=1137748852001375598 -F file=@E:/企业微信doc/WXWork/1688852503520108/Cache/Image/2026-05/企业微信截图_17788308826075.png --max-time 30)",
+      "Bash(curl -sS -o /tmp/tapd_upload_resp.json -w '%{http_code}' -X POST https://api.tapd.cn/files/upload_attachment -H 'Authorization: Bearer 17a0225cbf7feb30512862681ad2ac0cec9676e8' -F workspace_id=37748852 -F type=story -F entry_id=1137748852001375598 -F file=@E:/企业微信doc/WXWork/1688852503520108/Cache/Image/2026-05/企业微信截图_17788308826075.png --max-time 30)",
+      "mcp__tapd__tapd_get_story",
+      "mcp__tapd__tapd_list_tasks"
     ]
   }
 }
