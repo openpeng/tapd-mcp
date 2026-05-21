@@ -1058,6 +1058,16 @@ export class TapdClient {
 
   // ==================== Timesheet APIs ====================
 
+  /**
+   * TAPD timesheet API expects singular entity_type ("task"/"story"/"bug"),
+   * but our MCP tool surface uses plural ("tasks"/"stories"/"bugs") for
+   * consistency with comments/attachments. Normalize here.
+   */
+  private toSingularEntityType(entityType?: string): string | undefined {
+    if (!entityType) return entityType;
+    return entityType.endsWith('s') ? entityType.slice(0, -1) : entityType;
+  }
+
   async listTimesheets(
     workspaceId: string,
     options?: {
@@ -1073,7 +1083,7 @@ export class TapdClient {
   ): Promise<Timesheet[]> {
     const params: Record<string, string | number | undefined> = {
       workspace_id: workspaceId,
-      entity_type: options?.entityType,
+      entity_type: this.toSingularEntityType(options?.entityType),
       entity_id: options?.entityId,
       owner: options?.owner,
       limit: options?.limit || 30,
@@ -1103,7 +1113,7 @@ export class TapdClient {
   ): Promise<Timesheet> {
     const response = await this.request<{ Timesheet: Timesheet }>('POST', '/timesheets', {
       workspace_id: workspaceId,
-      entity_type: data.entityType,
+      entity_type: this.toSingularEntityType(data.entityType),
       entity_id: data.entityId,
       timespent: data.timespent,
       spentdate: data.spentdate,

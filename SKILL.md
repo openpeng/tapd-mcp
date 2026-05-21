@@ -205,6 +205,12 @@ tapd_list_timesheets workspace_id="..." owner="xiaopeng_lei" start_date="2025-05
 tapd_add_timesheet workspace_id="..." entity_type="tasks" entity_id="..." timespent="2" spentdate="2025-05-15" owner="xiaopeng_lei" memo="完成接口设计"
 ```
 
+> **`owner` 必须传 TAPD 英文 user id**（如 `xiaopeng_lei`），传中文姓名 TAPD 会以 `Save fail.` 拒绝。可先 `tapd_get_current_user` 拿到自己的 user id。
+>
+> **`memo` 避免传中文**：TAPD `/timesheets` 接口对 memo 的中文支持不稳，会被截断。需要中文备注请到 TAPD 网页端再补。
+>
+> **写入前先检查目标 task 的 `effort`/`remain`**：要写 N 小时但 task `remain` 不足，TAPD 会以模糊的 `Save fail.` 拒绝。先 `tapd_update_task` 把 `effort` 调大再写工时，或显式给 `exceed`。
+
 **更新 / 删除工时**（需要 API token 拥有 `timesheets::update` / `timesheets::delete` 权限，否则返回 403）：
 
 ```

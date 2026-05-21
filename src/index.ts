@@ -464,7 +464,8 @@ const tools: Tool[] = [
   },
   {
     name: 'tapd_add_timesheet',
-    description: 'Add a timesheet record (log work hours) to a story, task, or bug.',
+    description: 'Add a timesheet record (log work hours) to a story, task, or bug. ' +
+      'IMPORTANT: `owner` must be a TAPD English user id (e.g. "xiaopeng_lei"), not a Chinese display name — the API rejects display names with "Save fail."',
     inputSchema: {
       type: 'object',
       properties: {
@@ -472,15 +473,15 @@ const tools: Tool[] = [
         entity_type: {
           type: 'string',
           enum: ['stories', 'tasks', 'bugs'],
-          description: 'Target entity type (plural, e.g. "tasks")',
+          description: 'Target entity type (plural, e.g. "tasks"). The server maps to singular form for the TAPD API.',
         },
         entity_id: { type: 'string', description: 'Story/task/bug ID to log time on' },
         timespent: { type: 'string', description: 'Hours spent, e.g. "2" or "1.5"' },
         spentdate: { type: 'string', description: 'Date of work YYYY-MM-DD, e.g. "2025-05-15"' },
-        owner: { type: 'string', description: 'TAPD user id of the person who did the work (defaults to token holder)' },
+        owner: { type: 'string', description: 'TAPD English user id of the person who did the work (e.g. "xiaopeng_lei"). Chinese display names are rejected by TAPD.' },
         memo: { type: 'string', description: 'Optional note / description for this time log' },
       },
-      required: ['workspace_id', 'entity_type', 'entity_id', 'timespent', 'spentdate'],
+      required: ['workspace_id', 'entity_type', 'entity_id', 'timespent', 'spentdate', 'owner'],
     },
   },
   {
