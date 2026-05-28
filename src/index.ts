@@ -13,6 +13,10 @@ import {
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import { TapdClient } from './tapd-client.js';
+import {
+  readConfig,
+  getConfigSource,
+} from './config-store.js';
 
 const API_TOKEN = process.env.TAPD_API_TOKEN;
 const DEFAULT_WORKSPACE_ID = process.env.TAPD_WORKSPACE_ID;
@@ -121,6 +125,37 @@ const tools: Tool[] = [
         due: { type: 'string', description: 'New due date' },
       },
       required: ['workspace_id', 'story_id'],
+    },
+  },
+  {
+    name: 'tapd_set_story_custom_field',
+    description:
+      'Set a story custom field by user-facing name (e.g. "提测时间") or by API name ' +
+      '(e.g. "custom_field_one"). Resolves the name against the workspace\'s custom-field ' +
+      'definitions before writing, and returns the previous value. ' +
+      '`field` accepts a comma-separated alias list — the first one that resolves wins, ' +
+      'so `field="提测时间,提测日期,TestDate"` covers labels that vary across workspaces. ' +
+      'Pass `refresh=true` after a workspace admin edits the field config to bypass the ' +
+      'on-disk schema cache (~/.tapd-mcp/cache or $TAPD_CACHE_DIR).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        story_id: { type: 'string', description: 'Story ID (required unless `url` is provided)' },
+        url: { type: 'string', description: 'TAPD story URL (alternative to workspace_id + story_id)' },
+        field: {
+          type: 'string',
+          description:
+            'Field to write — a label like "提测时间" / "TestDate" or an API name like ' +
+            '"custom_field_one". Comma-separated for fuzzy match; first hit wins.',
+        },
+        value: { type: 'string', description: 'New value to write' },
+        refresh: {
+          type: 'boolean',
+          description: 'Drop the field-schema cache for this workspace before resolving (default false).',
+        },
+      },
+      required: ['field', 'value'],
     },
   },
 
@@ -465,7 +500,8 @@ const tools: Tool[] = [
   {
     name: 'tapd_add_timesheet',
     description: 'Add a timesheet record (log work hours) to a story, task, or bug. ' +
-      'IMPORTANT: `owner` must be a TAPD English user id (e.g. "xiaopeng_lei"), not a Chinese display name — the API rejects display names with "Save fail."',
+      'IMPORTANT: `owner` must be the TAPD username as it appears in TAPD (e.g. the value of TAPD_CURRENT_USER). ' +
+      'Use tapd_get_current_user to retrieve your own username.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -478,7 +514,7 @@ const tools: Tool[] = [
         entity_id: { type: 'string', description: 'Story/task/bug ID to log time on' },
         timespent: { type: 'string', description: 'Hours spent, e.g. "2" or "1.5"' },
         spentdate: { type: 'string', description: 'Date of work YYYY-MM-DD, e.g. "2025-05-15"' },
-        owner: { type: 'string', description: 'TAPD English user id of the person who did the work (e.g. "xiaopeng_lei"). Chinese display names are rejected by TAPD.' },
+        owner: { type: 'string', description: 'TAPD username of the person who did the work — must match the username shown in TAPD (same as TAPD_CURRENT_USER). Use tapd_get_current_user to retrieve your own username.' },
         memo: { type: 'string', description: 'Optional note / description for this time log' },
       },
       required: ['workspace_id', 'entity_type', 'entity_id', 'timespent', 'spentdate', 'owner'],
@@ -537,7 +573,11 @@ const tools: Tool[] = [
   // ==================== Custom Fields Settings Tool ====================
   {
     name: 'tapd_get_custom_fields_settings',
-    description: 'Get custom field schema / definitions for stories (or other entry types) in a workspace. Useful for discovering available custom field names and their types/options before reading or writing custom fields.',
+    description:
+      'Get custom field schema / definitions for stories (or other entry types) in a workspace. ' +
+      'Useful for discovering available custom field names and their types/options before reading ' +
+      'or writing custom fields. Pass `refresh=true` to drop the on-disk cache before reading ' +
+      '(use after a workspace admin changes labels / adds fields).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -546,12 +586,102 @@ const tools: Tool[] = [
           type: 'string',
           description: 'Entry type to query custom fields for. Defaults to "story".',
         },
+        refresh: {
+          type: 'boolean',
+          description: 'Drop the field-schema cache for this workspace + entry_type before reading.',
+        },
       },
       required: ['workspace_id'],
     },
   },
 
+  // ==================== Per-user config ====================
+  {
+    name: 'tapd_get_config',
+    description:
+      'Read the story config sourced from the TAPD_STORY_CONFIG environment variable. ' +
+      'Returns the parsed config plus the env var name. ' +
+      'Pass `workspace_id` to scope the response to one workspace.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Optional: only return that workspace section' },
+      },
+    },
+  },
+  {
+    name: 'tapd_apply_story_defaults',
+    description:
+      'Apply the per-workspace story defaults + matched field rules from $TAPD_STORY_CONFIG ' +
+      'to a single story. Use after tapd_create_story to populate attribution fields ' +
+      '(需求类型 / 项目归属 / 成本归属, etc.) without hard-coding them in the agent. ' +
+      'Caller-supplied `overrides` always win over config; cascade fields are retried on a second pass ' +
+      'so parent/child write order is automatic. Set `dry_run=true` to preview without writing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID (falls back to TAPD_WORKSPACE_ID)' },
+        story_id: { type: 'string', description: 'Story ID (required unless `url` is provided)' },
+        url: { type: 'string', description: 'TAPD story URL (alternative to workspace_id + story_id)' },
+        hint: {
+          type: 'string',
+          description:
+            'Text used to evaluate field rules (e.g. "题库后台增加批量导入"). Defaults to the story name when omitted.',
+        },
+        overrides: {
+          type: 'object',
+          description: 'Field -> value pairs that override both defaults and rules.',
+          additionalProperties: { type: 'string' },
+        },
+        dry_run: { type: 'boolean', description: 'Preview the plan without writing' },
+      },
+    },
+  },
+
+  {
+    name: 'tapd_get_story_changes',
+    description:
+      'Get the change history of a story (who changed which field, when, old → new value). ' +
+      'Backed by /story_changes. Useful for audit trails and figuring out who flipped a status or ' +
+      'rewrote the description.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        story_id: { type: 'string', description: 'Story ID' },
+        limit: { type: 'number', description: 'Max results (default 20)' },
+        page: { type: 'number', description: 'Page number (default 1)' },
+      },
+      required: ['story_id'],
+    },
+  },
+  {
+    name: 'tapd_list_workspace_users',
+    description:
+      'List members of a workspace via /users/get_users_by_workspace_id. ' +
+      'Use this to look up TAPD usernames (required for owner / current_owner / timesheet owner fields) ' +
+      'when you only know a display name.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID (falls back to TAPD_WORKSPACE_ID)' },
+      },
+    },
+  },
+
   // ==================== Release Tools ====================
+  {
+    name: 'tapd_get_release',
+    description: 'Get details of a specific release by ID',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        release_id: { type: 'string', description: 'Release ID' },
+      },
+      required: ['release_id'],
+    },
+  },
   {
     name: 'tapd_list_releases',
     description: 'List releases in a workspace',
@@ -737,6 +867,28 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
         iterationId: args.iteration_id as string,
         begin: args.begin as string,
         due: args.due as string,
+      });
+    }
+
+    case 'tapd_set_story_custom_field': {
+      const field = args.field as string;
+      const value = args.value as string;
+      if (!field) throw new Error('field is required');
+      if (value === undefined || value === null) throw new Error('value is required');
+      let workspaceId: string;
+      let storyId: string;
+      if (args.url) {
+        const parsed = client.parseUrl(args.url as string);
+        if (!parsed) throw new Error('Invalid TAPD URL');
+        workspaceId = parsed.workspaceId;
+        storyId = parsed.resourceId;
+      } else {
+        workspaceId = getWorkspaceId(args);
+        storyId = args.story_id as string;
+        if (!storyId) throw new Error('story_id (or url) is required');
+      }
+      return await client.setStoryCustomField(workspaceId, storyId, field, value, {
+        refresh: args.refresh === true,
       });
     }
 
@@ -992,11 +1144,66 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
     case 'tapd_get_custom_fields_settings': {
       return await client.getCustomFieldsSettings(
         getWorkspaceId(args),
-        (args.entry_type as string) || 'story'
+        (args.entry_type as string) || 'story',
+        { refresh: args.refresh === true }
       );
     }
 
+    case 'tapd_get_config': {
+      const config = readConfig();
+      const { env, raw } = getConfigSource();
+      const source = { env, configured: Boolean(raw && raw.trim()) };
+      if (args.workspace_id) {
+        const wsid = args.workspace_id as string;
+        const ws =
+          config.workspaces?.[wsid] ??
+          (config.story_defaults || config.story_field_rules
+            ? {
+                story_defaults: config.story_defaults,
+                story_field_rules: config.story_field_rules,
+              }
+            : {});
+        return { source, workspace_id: wsid, config: ws };
+      }
+      return { source, config };
+    }
+
+    case 'tapd_apply_story_defaults': {
+      let workspaceId: string;
+      let storyId: string;
+      if (args.url) {
+        const parsed = client.parseUrl(args.url as string);
+        if (!parsed) throw new Error('Invalid TAPD URL');
+        workspaceId = parsed.workspaceId;
+        storyId = parsed.resourceId;
+      } else {
+        workspaceId = getWorkspaceId(args);
+        storyId = args.story_id as string;
+        if (!storyId) throw new Error('story_id (or url) is required');
+      }
+      return await client.applyStoryDefaults(workspaceId, storyId, {
+        hint: args.hint as string | undefined,
+        overrides: (args.overrides as Record<string, string> | undefined) ?? undefined,
+        dryRun: args.dry_run === true,
+      });
+    }
+
+    case 'tapd_get_story_changes': {
+      return await client.getStoryChanges(getWorkspaceId(args), args.story_id as string, {
+        limit: args.limit as number | undefined,
+        page: args.page as number | undefined,
+      });
+    }
+
+    case 'tapd_list_workspace_users': {
+      return await client.getWorkspaceUsers(getWorkspaceId(args));
+    }
+
     // Release handlers
+    case 'tapd_get_release': {
+      return await client.getRelease(getWorkspaceId(args), args.release_id as string);
+    }
+
     case 'tapd_list_releases': {
       return await client.listReleases(getWorkspaceId(args), {
         status: args.status as string,

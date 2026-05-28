@@ -4,6 +4,8 @@
 
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
+import { readFieldsCache, writeFieldsCache, clearFieldsCache } from './fields-cache.js';
+import { readConfig, getWorkspaceConfig, pickRuleValue } from './config-store.js';
 
 export interface TapdConfig {
   apiToken: string;
@@ -267,16 +269,18 @@ export class TapdClient {
   private async request<T>(
     method: 'GET' | 'POST',
     endpoint: string,
-    params?: Record<string, string | number | undefined>
+    params?: Record<string, string | number | undefined>,
+    options?: { keepEmpty?: string[] }
   ): Promise<TapdResponse<T>> {
     const url = new URL(endpoint, this.baseUrl);
 
+    const keepEmpty = new Set(options?.keepEmpty || []);
     const filteredParams: Record<string, string> = {};
     if (params) {
       for (const [key, value] of Object.entries(params)) {
-        if (value !== undefined && value !== null && value !== '') {
-          filteredParams[key] = String(value);
-        }
+        if (value === undefined || value === null) continue;
+        if (value === '' && !keepEmpty.has(key)) continue;
+        filteredParams[key] = String(value);
       }
     }
 
@@ -435,6 +439,341 @@ export class TapdClient {
     }
 
     return response.data[0].Story;
+  }
+
+  /**
+   * Look up a custom-field definition by user-facing label or by API name.
+   * `query` matches against (in order): the API name itself (e.g. "custom_field_one"),
+   * then the Chinese/English label, then the legacy `field_name` key. Match is
+   * case-insensitive, whitespace-trimmed, and both English+Chinese punctuation
+   * are normalised so users can type "提测时间" or "提测 时间" or "TestDate".
+   *
+   * Two data sources are tried, in order:
+   *   1. /stories/get_fields_info — covers ALL story fields (system + custom)
+   *      with localized labels. This is the canonical source for workspaces that
+   *      use TAPD's "field config" UI. Returns 403 in some workspaces; falls
+   *      back to source 2.
+   *   2. /stories/custom_fields_settings — older endpoint; only returns custom
+   *      fields and may be empty in workspaces that store labels under (1).
+   *
+   * Returns null when no field matches; otherwise the raw setting plus the
+   * resolved API name (the property you POST to /stories with).
+   */
+  async resolveStoryCustomField(
+    workspaceId: string,
+    query: string,
+    entryType = 'story'
+  ): Promise<
+    | (CustomFieldSetting & { api_name: string })
+    | null
+  > {
+    const norm = (s?: string) => (s || '').replace(/\s+/g, '').toLowerCase();
+    const target = norm(query);
+
+    try {
+      const info = await this.getStoryFieldsInfo(workspaceId);
+      for (const [apiName, def] of Object.entries(info)) {
+        const label = (def as any).label || '';
+        if (norm(apiName) === target || norm(label) === target) {
+          return {
+            api_name: apiName,
+            field_name: apiName,
+            field_label: label,
+            field_type: (def as any).html_type,
+          } as CustomFieldSetting & { api_name: string };
+        }
+      }
+    } catch {
+      // fall through to legacy endpoint
+    }
+
+    const settings = await this.getCustomFieldsSettings(workspaceId, entryType);
+    for (const f of settings) {
+      const apiName =
+        (f as any).custom_field ||
+        f.field_name ||
+        (f as any).name ||
+        '';
+      const label = f.field_label || (f as any).label || (f as any).cn_name || '';
+      const enName = (f as any).en_name || (f as any).english_name || '';
+
+      if (
+        norm(apiName) === target ||
+        norm(label) === target ||
+        norm(enName) === target ||
+        norm(f.field_name) === target
+      ) {
+        return { ...f, api_name: apiName };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Fetch the workspace's full story field schema via /stories/get_fields_info.
+   * Returns a map { api_name -> { label, html_type, options, readonly } }.
+   *
+   * Caches the result on disk per workspace (see src/fields-cache.ts) — the
+   * schema rarely changes, and skipping the network on every resolve speeds
+   * up repeated `tapd_set_story_*` calls noticeably. Pass `forceRefresh: true`
+   * after a workspace admin edits the field config.
+   *
+   * Throws (rather than returning {}) on permission errors so callers can fall
+   * back to the legacy custom_fields_settings endpoint.
+   */
+  async getStoryFieldsInfo(
+    workspaceId: string,
+    options?: { forceRefresh?: boolean }
+  ): Promise<Record<string, { label?: string; html_type?: string; options?: any; readonly?: number }>> {
+    if (!options?.forceRefresh) {
+      const cached = await readFieldsCache<
+        Record<string, { label?: string; html_type?: string; options?: any; readonly?: number }>
+      >(workspaceId, 'story');
+      if (cached?.data) return cached.data;
+    }
+
+    const url = new URL('/stories/get_fields_info', this.baseUrl);
+    url.search = new URLSearchParams({ workspace_id: workspaceId }).toString();
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        Authorization: this.buildAuthHeader(),
+        Accept: 'application/json',
+        'User-Agent': 'TAPD-MCP-Server/1.0',
+      },
+    });
+    if (!res.ok) {
+      throw new Error(`get_fields_info HTTP ${res.status} ${res.statusText}`);
+    }
+    const j: any = await res.json();
+    if (j.status !== 1) {
+      throw new Error(`get_fields_info status=${j.status} info=${j.info || 'unknown'}`);
+    }
+    const data = j.data || {};
+    try {
+      await writeFieldsCache(workspaceId, 'story', data);
+    } catch {
+      // cache write failure is non-fatal; the network result is still returned
+    }
+    return data;
+  }
+
+  /**
+   * Set a custom field on a story by user-facing field name OR by API name.
+   *
+   * `field` accepts either:
+   *   - a label (e.g. "提测时间", "TestDate") — resolved via /stories/custom_fields_settings
+   *   - an API name (e.g. "custom_field_one") — used directly
+   *
+   * Returns the updated story plus the resolved field metadata so the caller
+   * can confirm what was written.
+   */
+  async setStoryCustomField(
+    workspaceId: string,
+    storyId: string,
+    field: string,
+    value: string,
+    options?: { refresh?: boolean }
+  ): Promise<{
+    story: Story;
+    field: { api_name: string; label?: string; type?: string };
+    previous?: string;
+  }> {
+    if (options?.refresh) {
+      await clearFieldsCache({ workspaceId, entityType: 'story' });
+    }
+
+    const candidates = field
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (candidates.length === 0) {
+      throw new Error('field is required');
+    }
+
+    let apiName = '';
+    let label: string | undefined;
+    let type: string | undefined;
+    let lastTried = '';
+
+    for (const cand of candidates) {
+      lastTried = cand;
+      if (/^custom_field(?:_[a-z]+|_\d+)?$/i.test(cand)) {
+        apiName = cand;
+        break;
+      }
+      const resolved = await this.resolveStoryCustomField(workspaceId, cand);
+      if (resolved) {
+        apiName = resolved.api_name;
+        label = resolved.field_label || (resolved as any).label;
+        type = resolved.field_type;
+        break;
+      }
+    }
+
+    if (!apiName) {
+      let availableLines = '';
+      try {
+        const info = await this.getStoryFieldsInfo(workspaceId);
+        availableLines = Object.entries(info)
+          .filter(([, v]) => !(v as any).readonly)
+          .map(([k, v]) => {
+            const l = (v as any).label || '(no label)';
+            const t = (v as any).html_type || '?';
+            return `  ${k} | ${t} | ${l}`;
+          })
+          .join('\n');
+      } catch {
+        const settings = await this.getCustomFieldsSettings(workspaceId, 'story');
+        availableLines = settings
+          .map(f => {
+            const a = (f as any).custom_field || f.field_name || (f as any).name || '?';
+            const l = f.field_label || (f as any).label || '(no label)';
+            const t = f.field_type || '?';
+            return `  ${a} | ${t} | ${l}`;
+          })
+          .join('\n');
+      }
+      throw new Error(
+        `None of the field candidates [${candidates.join(', ')}] matched in workspace ${workspaceId} ` +
+        `(last tried: "${lastTried}").\n\n` +
+        `Writable fields in this workspace (api_name | type | label):\n` +
+        (availableLines || '  (no fields defined)') +
+        `\n\nNext step: pick the field that matches the user's intent, confirm with the user if ambiguous, ` +
+        `then retry tapd_set_story_custom_field with its api_name. ` +
+        `Save the resolved alias -> api_name mapping to project memory so future sessions skip this step.`
+      );
+    }
+
+    const before = await this.getStory(workspaceId, storyId, `id,name,${apiName}`);
+    if (!before) throw new Error(`Story ${storyId} not found`);
+    const previous = before[apiName];
+
+    const response = await this.request<{ Story: Story }>(
+      'POST',
+      '/stories',
+      {
+        workspace_id: workspaceId,
+        id: storyId,
+        [apiName]: value,
+      },
+      { keepEmpty: [apiName] }
+    );
+    if (!response.data || response.data.length === 0) {
+      throw new Error(`Failed to set ${apiName}: no data returned`);
+    }
+    return {
+      story: response.data[0].Story,
+      field: { api_name: apiName, label, type },
+      previous,
+    };
+  }
+
+  /**
+   * Apply the per-workspace story defaults from `~/.tapd-mcp/config.json`.
+   *
+   * Pipeline:
+   *   1. Read config -> workspaces.<wsid>.{ story_defaults, story_field_rules }
+   *   2. Resolve `story_field_rules` against `hint` (or the story's name) and
+   *      merge with `story_defaults` (defaults win for overlapping keys).
+   *   3. Apply caller `overrides` last (always win).
+   *   4. Two-pass write so cascade fields don't fail when written before
+   *      their parent.
+   */
+  async applyStoryDefaults(
+    workspaceId: string,
+    storyId: string,
+    options?: { hint?: string; overrides?: Record<string, string>; dryRun?: boolean }
+  ): Promise<{
+    plan: Array<{ field: string; value: string; source: 'default' | 'rule' | 'override' }>;
+    applied: Array<{ field: string; api_name: string; value: string; previous?: string }>;
+    failed: Array<{ field: string; value: string; error: string }>;
+    skipped_no_match: string[];
+    dry_run: boolean;
+  }> {
+    const config = readConfig();
+    const ws = getWorkspaceConfig(config, workspaceId);
+
+    let hint = options?.hint;
+    if (!hint && ws.story_field_rules && Object.keys(ws.story_field_rules).length > 0) {
+      const story = await this.getStory(workspaceId, storyId, 'id,name');
+      hint = story?.name || '';
+    }
+
+    const plan: Array<{ field: string; value: string; source: 'default' | 'rule' | 'override' }> = [];
+    const skippedNoMatch: string[] = [];
+
+    for (const [field, value] of Object.entries(ws.story_defaults || {})) {
+      plan.push({ field, value, source: 'default' });
+    }
+
+    for (const [field, rules] of Object.entries(ws.story_field_rules || {})) {
+      if (plan.some(p => p.field === field)) continue;
+      const matched = pickRuleValue(rules, hint || '');
+      if (matched === undefined) {
+        skippedNoMatch.push(field);
+        continue;
+      }
+      plan.push({ field, value: matched, source: 'rule' });
+    }
+
+    for (const [field, value] of Object.entries(options?.overrides || {})) {
+      const existing = plan.find(p => p.field === field);
+      if (existing) {
+        existing.value = value;
+        existing.source = 'override';
+      } else {
+        plan.push({ field, value, source: 'override' });
+      }
+    }
+
+    if (options?.dryRun) {
+      return { plan, applied: [], failed: [], skipped_no_match: skippedNoMatch, dry_run: true };
+    }
+
+    const applied: Array<{ field: string; api_name: string; value: string; previous?: string }> = [];
+    const failed: Array<{ field: string; value: string; error: string }> = [];
+
+    let pending = [...plan];
+    for (let pass = 0; pass < 2 && pending.length > 0; pass++) {
+      const nextRound: typeof pending = [];
+      for (const item of pending) {
+        try {
+          const result = await this.setStoryCustomField(
+            workspaceId,
+            storyId,
+            item.field,
+            item.value
+          );
+          applied.push({
+            field: item.field,
+            api_name: result.field.api_name,
+            value: item.value,
+            previous: result.previous,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (pass === 0 && /cascade field/i.test(msg)) {
+            nextRound.push(item);
+          } else {
+            failed.push({ field: item.field, value: item.value, error: msg });
+          }
+        }
+      }
+      pending = nextRound;
+    }
+
+    for (const item of pending) {
+      failed.push({ field: item.field, value: item.value, error: 'Cascade dependency unresolved after retry' });
+    }
+
+    return {
+      plan,
+      applied,
+      failed,
+      skipped_no_match: skippedNoMatch,
+      dry_run: false,
+    };
   }
 
   async getStoryChanges(
@@ -1184,8 +1523,12 @@ export class TapdClient {
 
   async getCustomFieldsSettings(
     workspaceId: string,
-    entryType = 'story'
+    entryType = 'story',
+    options?: { refresh?: boolean }
   ): Promise<CustomFieldSetting[]> {
+    if (options?.refresh) {
+      await clearFieldsCache({ workspaceId, entityType: entryType });
+    }
     const response = await this.request<{ CustomFieldSetting: CustomFieldSetting }>(
       'GET',
       '/stories/custom_fields_settings',
