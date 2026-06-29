@@ -293,6 +293,22 @@ const tools: Tool[] = [
     },
   },
   {
+    name: 'tapd_get_story_related_bugs',
+    description:
+      'Get bugs directly associated with a story via TAPD relationship. ' +
+      'Returns full bug details (id/title/status/severity/priority/owner/iteration). ' +
+      'This is the correct way to find which bugs are linked to a story — ' +
+      'do NOT filter by iteration + keywords, which returns false positives.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        story_id: { type: 'string', description: 'Story ID' },
+      },
+      required: ['workspace_id', 'story_id'],
+    },
+  },
+  {
     name: 'tapd_create_bug',
     description: 'Create a new bug report',
     inputSchema: {
@@ -972,6 +988,14 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
         limit: args.limit as number,
         page: args.page as number,
       });
+      return bugs.map(b => ({ ...b, status_name: client.translateBugStatus(b.status || '') }));
+    }
+
+    case 'tapd_get_story_related_bugs': {
+      const bugs = await client.getStoryRelatedBugs(
+        getWorkspaceId(args),
+        args.story_id as string
+      );
       return bugs.map(b => ({ ...b, status_name: client.translateBugStatus(b.status || '') }));
     }
 

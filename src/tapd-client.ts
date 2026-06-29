@@ -957,6 +957,31 @@ export class TapdClient {
     return response.data?.map(item => item.Bug) || [];
   }
 
+  /**
+   * Get bugs associated with a specific story via TAPD's relationship system.
+   * Calls /stories/get_related_bugs to get bug IDs, then fetches full details.
+   */
+  async getStoryRelatedBugs(workspaceId: string, storyId: string): Promise<Bug[]> {
+    // Step 1: Get associated bug IDs from TAPD relationship API
+    const response = await this.request<{ workspace_id: string; story_id: string; bug_id: string }>(
+      'GET',
+      '/stories/get_related_bugs',
+      { workspace_id: workspaceId, story_id: storyId }
+    );
+
+    const relations = (response.data || []).filter(r => r.bug_id);
+    if (relations.length === 0) return [];
+
+    // Step 2: Fetch full bug details for each associated bug ID
+    const bugs: Bug[] = [];
+    for (const rel of relations) {
+      const bug = await this.getBug(workspaceId, rel.bug_id);
+      if (bug) bugs.push(bug);
+    }
+
+    return bugs;
+  }
+
   async createBug(
     workspaceId: string,
     data: {

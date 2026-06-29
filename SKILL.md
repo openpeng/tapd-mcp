@@ -1,11 +1,11 @@
 ---
 name: tapd
-description: 用 TAPD MCP 工具操作 TAPD(腾讯敏捷研发平台)的需求/任务/缺陷/迭代/评论/发布/工时/附件/自定义字段。当用户要求查看、创建、修改 TAPD story/task/bug/iteration/release/comment/timesheet,或贴出 tapd.cn 链接要求处理时调用。覆盖 37 个 `tapd_*` 工具(含变更历史、成员名册、release 详情、自定义字段写入支持别名 fuzzy 匹配、env 驱动的 story 默认字段填充),并给出字段裁剪、状态枚举、URL 解析、工时填写、自定义字段解析、归属字段配置等关键约定。
+description: 用 TAPD MCP 工具操作 TAPD(腾讯敏捷研发平台)的需求/任务/缺陷/迭代/评论/发布/工时/附件/自定义字段。当用户要求查看、创建、修改 TAPD story/task/bug/iteration/release/comment/timesheet,或贴出 tapd.cn 链接要求处理时调用。覆盖 38 个 `tapd_*` 工具(含变更历史、成员名册、release 详情、需求关联缺陷查询、自定义字段写入支持别名 fuzzy 匹配、env 驱动的 story 默认字段填充),并给出字段裁剪、状态枚举、URL 解析、工时填写、自定义字段解析、归属字段配置等关键约定。
 ---
 
 # TAPD 操作说明
 
-本 skill 对应 `tapd-mcp` 服务暴露的 **37 个**工具,覆盖 8 类资源:Story(需求)、Task(任务)、Bug、Iteration(迭代)、Release(发布)、Comment(评论)、Timesheet(工时记录)、Attachment(附件),外加自定义字段查询/写入(支持别名 fuzzy 匹配 + 缓存刷新)、env 驱动的 story 默认字段配置、URL 解析、变更历史、workspace 成员名册与代码关联。
+本 skill 对应 `tapd-mcp` 服务暴露的 **38 个**工具,覆盖 8 类资源:Story(需求)、Task(任务)、Bug、Iteration(迭代)、Release(发布)、Comment(评论)、Timesheet(工时记录)、Attachment(附件),外加自定义字段查询/写入(支持别名 fuzzy 匹配 + 缓存刷新)、env 驱动的 story 默认字段配置、URL 解析、变更历史、workspace 成员名册与代码关联。
 
 ## 前置检查：工具是否可用
 
@@ -51,13 +51,13 @@ description: 用 TAPD MCP 工具操作 TAPD(腾讯敏捷研发平台)的需求/�
 - 用户提到 TAPD、需求/故事、迭代、bug、缺陷、任务认领、工时、评审、发布列车等
 - 用户要求"查/列/建/改"上述资源；纯阅读优先 `get_*` / `list_*`，写操作前要先理解 ID
 
-## 工具速查表(共 37 个)
+## 工具速查表(共 38 个)
 
 | 资源 | 读 | 写 |
 |------|------|------|
 | Story | `tapd_get_story`, `tapd_list_stories`, `tapd_get_story_commits`, `tapd_get_story_changes` | `tapd_create_story`, `tapd_update_story`, `tapd_set_story_custom_field`, `tapd_apply_story_defaults` |
 | Task | `tapd_get_task`, `tapd_list_tasks` | `tapd_create_task`, `tapd_update_task` |
-| Bug | `tapd_get_bug`, `tapd_list_bugs` | `tapd_create_bug`, `tapd_update_bug` |
+| Bug | `tapd_get_bug`, `tapd_list_bugs`, `tapd_get_story_related_bugs` | `tapd_create_bug`, `tapd_update_bug` |
 | Iteration | `tapd_get_iteration`, `tapd_list_iterations` | `tapd_create_iteration`, `tapd_update_iteration` |
 | Release | `tapd_get_release`, `tapd_list_releases` | `tapd_create_release`, `tapd_update_release` |
 | Comment | `tapd_list_comments` | `tapd_add_comment` |
@@ -305,6 +305,8 @@ tapd_delete_timesheet workspace_id="..." timesheet_id="..."
 
 ### 7. 自定义字段:查询与写入
 
+> **核心原则:字段映射是 per-workspace 的,本 skill 不维护任何全局 `custom_field_X → 含义` 对照表。** 同一个 `custom_field_NN` 在不同 workspace 含义可能完全不同(A workspace 的 `custom_field_96` 是「提测时间」,B workspace 可能是别的字段)。每个 workspace 的映射现场解析一次,确认后落到该 workspace 自己的本地记忆 `tapd-field-aliases-<wsid>`;之后**先读这份本地映射**再调用,缺失时才重新解析。绝不跨 workspace 复用字段 ID。
+
 **先查 schema** —— 在读写 story 自定义字段前,了解字段的 API 名、中文标签和类型:
 
 ```
@@ -341,12 +343,12 @@ tapd_set_story_custom_field workspace_id="..." story_id="..." field="新加的�
 
 `tapd_get_custom_fields_settings` 也支持 `refresh=true`,同源同效。
 
-**字段解析失败时的工作流(模糊匹配兜底)** —— 用户说"把提测日期写成 X",但 workspace 里实际叫"提测时间"、`Test_Date`、或者干脆用了一个 `custom_field_NN`,你猜不准。这种时候 `tapd_set_story_custom_field` 会抛错并把**当前 workspace 所有可写字段列出来**,格式是每行一条 `api_name | type | label`。看到这个列表后:
+**字段解析失败时的工作流(模糊匹配兜底)** —— 用户说"把提测日期写成 X",但 workspace 里实际叫"提测时间"、`Test_Date`、或者干脆用了一个 `custom_field_NN`,你猜不准。**第一步永远是查该 workspace 的本地记忆 `tapd-field-aliases-<wsid>`**:有就直接按里面的别名串调用,跳过下面的探路。没有(或里面没这个字段)时,`tapd_set_story_custom_field` 会抛错并把**当前 workspace 所有可写字段列出来**,格式是每行一条 `api_name | type | label`。看到这个列表后:
 
 1. **扫一遍列表**,按 label 找语义最接近的字段;label 雷同时再看 type(日期类应是 `dateinput`、单选是 `radio`/`select`、多选/级联是 `cascade_checkbox` 等)。
-2. **不确定就问用户**,把 2~3 个最像的候选连同 api_name 一起列出来让用户挑;**绝不要瞎猜**写错字段。
+2. **不确定就问用户**,把 2~3 个最像的候选连同 api_name 一起列出来让用户挑;**绝不要瞎猜**写错字段,也**绝不要套用别的 workspace 的 `custom_field_NN`**。
 3. 用确认后的 api_name 重试 `tapd_set_story_custom_field`。
-4. **写入项目记忆**,把"用户口语 / 别名 → api_name"的映射沉淀下来,下一次就能直接走别名 fuzzy 命中。模板:
+4. **写入项目记忆**,把"用户口语 / 别名 → api_name"的映射沉淀到**这个 workspace 专属**的记忆文件,下一次直接读它命中。模板(把 `<wsid>` 换成真实 workspace id,字段条目按实际解析结果填,**下面只是格式示例不是真实值**):
 
 ```markdown
 ---
@@ -358,25 +360,18 @@ metadata:
 
 workspace `<wsid>` 字段映射(优先用左侧任一别名做 fuzzy 匹配):
 
-- 提测时间 / 提测日期 / TestDate → `custom_field_96` (dateinput)
-- 测试时间 / 测试完成时间       → `custom_field_97` (dateinput)
-- 需求类型                       → `custom_field_10` (select)
-- 项目归属                       → `custom_field_12` (cascade_checkbox)
-- 成本归属                       → `custom_field_9`  (cascade_checkbox)
+- <别名1> / <别名2> / <英文别名> → `custom_field_NN` (<type>)
+- <另一个字段的别名...>          → `custom_field_MM` (<type>)
 
-**How to apply:** 调 `tapd_set_story_custom_field` 时,把别名串起来传给 `field`,例如 `field="提测时间,提测日期,TestDate"`,首条命中即用,新 workspace 第一次写错时按 §7 工作流补齐到这里。
+**How to apply:** 调 `tapd_set_story_custom_field` 时,把别名串起来传给 `field`,例如 `field="别名1,别名2"`,首条命中即用。**这些 ID 只在本 workspace 有效**;换 workspace 时新建一个 `tapd-field-aliases-<新wsid>` 记忆,不要复用本文件的 `custom_field_NN`。
 ```
 
-写过的 workspace 直接按记忆里的别名串调用,不要再触发完整字段列表的错误返回。
-
-> **典型字段 ID(仅本 workspace 参考):** 提测时间 → `custom_field_96`(dateinput)、测试时间 → `custom_field_97`、按时提测 → `custom_field_three`、测试重点 → `test_focus`、需求类型 → `custom_field_10`(select)、项目归属 → `custom_field_12`(cascade_checkbox)、成本归属 → `custom_field_9`(cascade_checkbox)。换 workspace 必须重新解析,不要硬编码。
+写过的 workspace 直接按其专属记忆里的别名串调用,不要再触发完整字段列表的错误返回;没写过的 workspace 走上面 1~4 步现场解析。
 
 **级联字段(cascade_checkbox)的格式坑:**
 
-- TAPD cascade 写入用 **`/`** 作为层级分隔符(不是 `|`),且必须给**完整路径**:
-  - 项目归属:`常规项目/题库` / `战略项目/EP5` / `常规项目/课程产品` / `常规项目/机考` / `常规项目/CFA出海`
-  - 成本归属:`科技研发中心/科技研发中心/所有项目平摊成本`(三级路径都不能省)
-- 路径错了 TAPD 只会回 `The value of cascade field [custom_field_X] is not exist!`,不会告诉你正确格式。**最稳的探路办法是 `tapd_list_stories fields="id,custom_field_X" iteration_id="<近期迭代>"` 抄一个已有 story 的现成值**。
+- TAPD cascade 写入用 **`/`** 作为层级分隔符(不是 `|`),且必须给**完整路径**,每一级都不能省(如 `常规项目/题库`、`科技研发中心/科技研发中心/所有项目平摊成本`)。
+- **可选值同样是 per-workspace 的**,本 skill 不列任何固定路径清单。路径错了 TAPD 只会回 `The value of cascade field [custom_field_X] is not exist!`,不会告诉你正确格式。**最稳的探路办法是 `tapd_list_stories fields="id,custom_field_X" iteration_id="<近期迭代>"` 抄一个本 workspace 已有 story 的现成值**,不要根据 schema 自己拼、更不要套用别的 workspace 的路径。
 - 创建/更新 story 时若两个 cascade 字段相互依赖(同一张表单),**先写父级、再写子级**;TAPD 422 报"父字段不存在"时通常是这个原因。
 
 ### 8. 字段 schema 缓存
@@ -398,6 +393,33 @@ tapd_get_story_changes workspace_id="..." story_id="..." limit=20
 ```
 
 返回字段含 `author` / `field` / `old_value` / `new_value` / `created`。无变更或没权限时返回空数组,不报错。Task / Bug 的变更历史 TAPD 也有,但当前 MCP 未暴露,有需要再加。
+
+### 12. 查看需求关联的缺陷
+
+用户问「帮我看下这个需求有哪些缺陷」时，**优先使用 `tapd_get_story_related_bugs`**。
+
+**一键获取（推荐，v1.0.8+）：**
+
+```
+tapd_get_story_related_bugs workspace_id="..." story_id="..."
+```
+
+该工具调用 TAPD 开放 API `/stories/get_related_bugs`（需求-缺陷关系接口），直接返回与需求**精确关联**的所有缺陷完整信息（id/title/status/severity/priority/owner/iteration_id/custom_field_two 等），无需人工筛选。
+
+**背景：为什么要用专用接口而非 `tapd_list_bugs` 过滤？**
+
+TAPD 的「关联缺陷」通过独立关系表维护，`tapd_list_bugs` 返回的缺陷中 `story_id` 字段恒为 `null`，无法按需求 ID 过滤。直接用迭代+关键词筛选会混入同迭代下其他需求（如 PC/APP 同步副本）的缺陷，造成误报。
+
+**旧版降级方案（v1.0.7 及以下无此工具时）：**
+
+```
+1. tapd_get_story workspace_id="..." story_id="..."   # 拿到 iteration_id
+2. tapd_list_bugs workspace_id="..." iteration_id="..."   # 拉迭代所有缺陷
+3. 按标题关键词 + custom_field_two（责任模块）人工筛选
+4. 排除其他平台副本的缺陷：
+   - "APP-Android" / "APP-iOS" → APP 副本需求
+   - "前端-PC-学员端" / "后端-接口" → PC 副本需求
+```
 
 ### 11. workspace 成员名册
 
@@ -434,6 +456,7 @@ tapd_list_workspace_users workspace_id="..."
 - `tapd_update_timesheet` / `tapd_delete_timesheet` 需要 API token 额外勾选 `timesheets::update` / `timesheets::delete` 权限；缺失时返回 403，需登录 TAPD 管理页补权限。
 - **字段 schema 缓存可能过期**:在 TAPD 后台调整了自定义字段(新增、改 label、改选项)后,`tapd_set_story_custom_field` 还会按旧 label 解析,加 `refresh=true` 再写入即可(见 §7)。
 - **写空字符串清字段**：`tapd_update_story` 会自动剔除空串字段；如果想把某个自定义字段恢复成空，用 `tapd_set_story_custom_field value=""`，它内部已显式放行空串。
+- **迭代缺陷列表 ≠ 需求关联缺陷**：`tapd_list_bugs iteration_id="..."` 返回的是该迭代下的**全部**缺陷，不是某个需求专属的。缺陷的 `story_id` 字段通常为 `null`（TAPD 关联关系走独立关系表）。获取需求关联缺陷请用 `tapd_get_story_related_bugs`（见 §12），不要手动筛选。
 
 ## 一句话决策
 
