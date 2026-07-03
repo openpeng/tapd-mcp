@@ -319,8 +319,11 @@ Use tapd_create_task with:
   name: "Implement login API"
   story_id: "112345678901234567"
   owner: "developer_name"
+  begin: "2026-07-01"
   effort: "8"
 ```
+
+> `begin` (start date, YYYY-MM-DD) is required. `due` (end date) is optional — if omitted, it auto-calculates from `begin + effort` (effort / 8h per workday, rounded up).
 
 ### Update task status
 

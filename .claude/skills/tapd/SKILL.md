@@ -137,9 +137,13 @@ tapd_get_story url="https://www.tapd.cn/tapd_fe/12345/story/detail/1123456789012
 
 ### 3. 创建任务并落工时
 
+`tapd_create_task` 必填 `workspace_id`、`name`、`begin`（开始时间，YYYY-MM-DD 格式）。当用户没有提供开始时间时，务必反问用户确认。
+
 ```
-tapd_create_task workspace_id="..." name="登录接口实现" story_id="..." owner="zhangsan" effort="8"
+tapd_create_task workspace_id="..." name="登录接口实现" story_id="..." owner="zhangsan" begin="2026-07-01" effort="8"
 ```
+
+**结束时间(`due`)自动计算：** 如果创建时未显式提供 `due`（结束时间），工具会按 `begin + effort` 自动算出（effort / 8 小时 = 工作日数，向上取整）。例如 `begin=2026-07-01 + effort=16` → `due=2026-07-03`。如果用户明确指定了截止日期，直接传 `due="2026-07-05"` 即可。
 
 完成时更新工时（关键字段语义）：
 

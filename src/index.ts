@@ -236,11 +236,19 @@ const tools: Tool[] = [
         owner: { type: 'string', description: 'Task owner' },
         priority: { type: 'string', description: 'Priority' },
         iteration_id: { type: 'string', description: 'Iteration ID' },
-        begin: { type: 'string', description: 'Start date' },
-        due: { type: 'string', description: 'Due date' },
-        effort: { type: 'string', description: 'Estimated effort (hours)' },
+        begin: {
+          type: 'string',
+          description: 'Start date (YYYY-MM-DD, required). When user does not specify, ask before creating.',
+        },
+        due: {
+          type: 'string',
+          description:
+            'Due/end date (YYYY-MM-DD). If not provided, auto-calculated as begin + effort ' +
+            '(effort / 8 hours per workday, rounded up). E.g. begin=2026-07-01 + effort=16 → due=2026-07-03.',
+        },
+        effort: { type: 'string', description: 'Estimated effort in hours (string, e.g. "8"). Used to auto-calculate due when missing.' },
       },
-      required: ['workspace_id', 'name'],
+      required: ['workspace_id', 'name', 'begin'],
     },
   },
   {
@@ -1031,6 +1039,24 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
     }
 
     case 'tapd_create_task': {
+      const begin = args.begin as string;
+      let due = args.due as string | undefined;
+      const effort = args.effort as string | undefined;
+
+      // Auto-calculate due from begin + effort when due is missing
+      if (!due && effort) {
+        const hours = parseFloat(effort);
+        if (!isNaN(hours) && hours > 0) {
+          const workDays = Math.ceil(hours / 8);
+          const d = new Date(begin + 'T00:00:00');
+          // Add workdays (simple calendar-day addition, no holiday/skip-weekend logic)
+          for (let i = 0; i < workDays; i++) {
+            d.setDate(d.getDate() + 1);
+          }
+          due = d.toISOString().slice(0, 10);
+        }
+      }
+
       return await client.createTask(getWorkspaceId(args), {
         name: args.name as string,
         storyId: args.story_id as string,
@@ -1038,9 +1064,9 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
         owner: args.owner as string,
         priority: args.priority as string,
         iterationId: args.iteration_id as string,
-        begin: args.begin as string,
-        due: args.due as string,
-        effort: args.effort as string,
+        begin,
+        due,
+        effort,
       });
     }
 
