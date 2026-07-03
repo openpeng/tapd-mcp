@@ -1303,6 +1303,67 @@ export class TapdClient {
     });
   }
 
+  // ==================== Image Download API ====================
+
+  /**
+   * Get a single image download URL from TAPD via /files/get_image.
+   *
+   * TAPD's inline images (e.g. /tfl/captures/2026-06/tapd_xxx.png) are
+   * served behind authentication. This API returns a temporary download
+   * URL valid for ~300 seconds.
+   *
+   * @param workspaceId  Workspace ID
+   * @param imagePath    Image path as it appears in the HTML description
+   *                      (e.g. "/tfl/captures/2026-06/tapd_xxx.png" or a full URL)
+   * @returns Object with `download_url`, `filename`, and `type` fields
+   */
+  async getImage(workspaceId: string, imagePath: string): Promise<{
+    type: string;
+    value: string;
+    workspace_id: number;
+    filename: string;
+    download_url: string;
+  }> {
+    const response = await this.request<{ Attachment: any }>('GET', '/files/get_image', {
+      workspace_id: workspaceId,
+      image_path: imagePath,
+    });
+
+    if (!response.data || response.data.length === 0 || !response.data[0].Attachment) {
+      throw new Error(`get_image returned no data for path: ${imagePath}`);
+    }
+
+    const att = response.data[0].Attachment;
+    return {
+      type: att.type || 'tfl_image',
+      value: att.value || imagePath,
+      workspace_id: att.workspace_id,
+      filename: att.filename || imagePath.split('/').pop() || 'image.png',
+      download_url: att.download_url,
+    };
+  }
+
+  /**
+   * Get download URLs for multiple TAPD inline images.
+   */
+  async getImages(workspaceId: string, imagePaths: string[]): Promise<
+    Array<{ image_path: string; download_url?: string; error?: string }>
+  > {
+    const results: Array<{ image_path: string; download_url?: string; error?: string }> = [];
+    for (const path of imagePaths) {
+      try {
+        const img = await this.getImage(workspaceId, path);
+        results.push({ image_path: path, download_url: img.download_url });
+      } catch (e) {
+        results.push({
+          image_path: path,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+    return results;
+  }
+
   // ==================== Attachment APIs ====================
 
   async uploadAttachment(

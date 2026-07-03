@@ -26,3 +26,4 @@ coverage/
 # Local config
 .env
 .env.*
+.npmrc

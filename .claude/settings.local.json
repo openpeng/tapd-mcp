@@ -27,7 +27,11 @@
       "Bash(curl -sS -X POST https://api.tapd.cn/files/upload_attachment -H 'Authorization: Bearer 17a0225cbf7feb30512862681ad2ac0cec9676e8' -F workspace_id=37748852 -F type=story -F entry_id=1137748852001375598 -F file=@E:/企业微信doc/WXWork/1688852503520108/Cache/Image/2026-05/企业微信截图_17788308826075.png --max-time 30)",
       "Bash(curl -sS -o /tmp/tapd_upload_resp.json -w '%{http_code}' -X POST https://api.tapd.cn/files/upload_attachment -H 'Authorization: Bearer 17a0225cbf7feb30512862681ad2ac0cec9676e8' -F workspace_id=37748852 -F type=story -F entry_id=1137748852001375598 -F file=@E:/企业微信doc/WXWork/1688852503520108/Cache/Image/2026-05/企业微信截图_17788308826075.png --max-time 30)",
       "mcp__tapd__tapd_get_story",
-      "mcp__tapd__tapd_list_tasks"
+      "mcp__tapd__tapd_list_tasks",
+      "mcp__tapd__tapd_get_custom_fields_settings",
+      "mcp__tapd__tapd_set_story_test_submission_date",
+      "Read(//c/Users/gaodun/.claude/skills/**)",
+      "Read(//c/Users/gaodun/.claude/plugins/**)"
     ]
   }
 }

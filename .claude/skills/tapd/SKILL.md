@@ -1,11 +1,11 @@
 ---
 name: tapd
-description: 用 TAPD MCP 工具操作 TAPD(腾讯敏捷研发平台)的需求/任务/缺陷/迭代/评论/发布/工时/附件/自定义字段。当用户要求查看、创建、修改 TAPD story/task/bug/iteration/release/comment/timesheet,或贴出 tapd.cn 链接要求处理时调用。覆盖 37 个 `tapd_*` 工具(含变更历史、成员名册、release 详情、自定义字段写入支持别名 fuzzy 匹配、env 驱动的 story 默认字段填充),并给出字段裁剪、状态枚举、URL 解析、工时填写、自定义字段解析、归属字段配置等关键约定。
+description: 用 TAPD MCP 工具操作 TAPD(腾讯敏捷研发平台)的需求/任务/缺陷/迭代/评论/发布/工时/附件/自定义字段。当用户要求查看、创建、修改 TAPD story/task/bug/iteration/release/comment/timesheet,或贴出 tapd.cn 链接要求处理时调用。覆盖 39 个 `tapd_*` 工具(含变更历史、成员名册、release 详情、需求关联缺陷查询、图片下载、自定义字段写入支持别名 fuzzy 匹配、env 驱动的 story 默认字段填充),并给出字段裁剪、状态枚举、URL 解析、工时填写、自定义字段解析、归属字段配置等关键约定。
 ---
 
 # TAPD 操作说明
 
-本 skill 对应 `tapd-mcp` 服务暴露的 **37 个**工具,覆盖 8 类资源:Story(需求)、Task(任务)、Bug、Iteration(迭代)、Release(发布)、Comment(评论)、Timesheet(工时记录)、Attachment(附件),外加自定义字段查询/写入(支持别名 fuzzy 匹配 + 缓存刷新)、env 驱动的 story 默认字段配置、URL 解析、变更历史、workspace 成员名册与代码关联。
+本 skill 对应 `tapd-mcp` 服务暴露的 **39 个**工具,覆盖 8 类资源:Story(需求)、Task(任务)、Bug、Iteration(迭代)、Release(发布)、Comment(评论)、Timesheet(工时记录)、Attachment(附件),外加图片下载、自定义字段查询/写入(支持别名 fuzzy 匹配 + 缓存刷新)、env 驱动的 story 默认字段配置、URL 解析、变更历史、workspace 成员名册与代码关联。
 
 ## 前置检查：工具是否可用
 
@@ -51,18 +51,19 @@ description: 用 TAPD MCP 工具操作 TAPD(腾讯敏捷研发平台)的需求/�
 - 用户提到 TAPD、需求/故事、迭代、bug、缺陷、任务认领、工时、评审、发布列车等
 - 用户要求"查/列/建/改"上述资源；纯阅读优先 `get_*` / `list_*`，写操作前要先理解 ID
 
-## 工具速查表(共 37 个)
+## 工具速查表(共 39 个)
 
 | 资源 | 读 | 写 |
 |------|------|------|
 | Story | `tapd_get_story`, `tapd_list_stories`, `tapd_get_story_commits`, `tapd_get_story_changes` | `tapd_create_story`, `tapd_update_story`, `tapd_set_story_custom_field`, `tapd_apply_story_defaults` |
 | Task | `tapd_get_task`, `tapd_list_tasks` | `tapd_create_task`, `tapd_update_task` |
-| Bug | `tapd_get_bug`, `tapd_list_bugs` | `tapd_create_bug`, `tapd_update_bug` |
+| Bug | `tapd_get_bug`, `tapd_list_bugs`, `tapd_get_story_related_bugs` | `tapd_create_bug`, `tapd_update_bug` |
 | Iteration | `tapd_get_iteration`, `tapd_list_iterations` | `tapd_create_iteration`, `tapd_update_iteration` |
 | Release | `tapd_get_release`, `tapd_list_releases` | `tapd_create_release`, `tapd_update_release` |
 | Comment | `tapd_list_comments` | `tapd_add_comment` |
 | Timesheet | `tapd_list_timesheets` | `tapd_add_timesheet`, `tapd_update_timesheet`, `tapd_delete_timesheet` |
 | Attachment | `tapd_list_attachments` | `tapd_upload_attachment` |
+| Image | `tapd_get_image` | — |
 | Custom Fields | `tapd_get_custom_fields_settings` | — |
 | Config | `tapd_get_config` | — |
 | Util | `tapd_parse_url`, `tapd_get_current_user`, `tapd_list_workspace_users` | — |
@@ -177,6 +178,18 @@ tapd_upload_attachment entity_type="stories" entity_id="..." file_base64="iVBORw
 ```
 
 `file_path` 与 `file_base64` 互斥；`content_type` 一般可省略，TAPD 会按扩展名识别。返回值含附件 `id` / `download_url`，需要展示给用户时回贴这两个字段即可。
+
+### 4.2 下载 Story 描述中的内联图片
+
+`tapd_get_image` 下载 TAPD 内联图片（如 `/tfl/captures/2026-06/tapd_xxx.png`）到本地临时目录并返回文件路径，适合 AI 读取图片做视觉分析。`image_path` 可从 story 描述 HTML 中的 `<img src="...">` 提取：
+
+```
+tapd_get_image workspace_id="..." image_path="/tfl/captures/2026-06/tapd_xxx.png"
+```
+
+`image_path` 支持两种格式：TAPD 相对路径（`/tfl/captures/...`）和完整 URL（`https://www.tapd.cn/tfl/captures/...`）。返回 `{ image_path, local_path, mime_type, size }`。
+
+> `tapd_get_story` 也支持 `download_images=true` 参数，会在获取 story 详情时自动下载描述中的所有内联图片，返回 `_images: { count, items: [{local_path, ...}], errors }`。如果只需要看图片内容，直接用 `tapd_get_story ... download_images=true` 更省事。
 
 ### 5. 创建 Story / Bug
 
@@ -394,6 +407,33 @@ tapd_get_story_changes workspace_id="..." story_id="..." limit=20
 
 返回字段含 `author` / `field` / `old_value` / `new_value` / `created`。无变更或没权限时返回空数组,不报错。Task / Bug 的变更历史 TAPD 也有,但当前 MCP 未暴露,有需要再加。
 
+### 12. 查看需求关联的缺陷
+
+用户问「帮我看下这个需求有哪些缺陷」时，**优先使用 `tapd_get_story_related_bugs`**。
+
+**一键获取（推荐，v1.0.8+）：**
+
+```
+tapd_get_story_related_bugs workspace_id="..." story_id="..."
+```
+
+该工具调用 TAPD 开放 API `/stories/get_related_bugs`（需求-缺陷关系接口），直接返回与需求**精确关联**的所有缺陷完整信息（id/title/status/severity/priority/owner/iteration_id/custom_field_two 等），无需人工筛选。
+
+**背景：为什么要用专用接口而非 `tapd_list_bugs` 过滤？**
+
+TAPD 的「关联缺陷」通过独立关系表维护，`tapd_list_bugs` 返回的缺陷中 `story_id` 字段恒为 `null`，无法按需求 ID 过滤。直接用迭代+关键词筛选会混入同迭代下其他需求（如 PC/APP 同步副本）的缺陷，造成误报。
+
+**旧版降级方案（v1.0.7 及以下无此工具时）：**
+
+```
+1. tapd_get_story workspace_id="..." story_id="..."   # 拿到 iteration_id
+2. tapd_list_bugs workspace_id="..." iteration_id="..."   # 拉迭代所有缺陷
+3. 按标题关键词 + custom_field_two（责任模块）人工筛选
+4. 排除其他平台副本的缺陷：
+   - "APP-Android" / "APP-iOS" → APP 副本需求
+   - "前端-PC-学员端" / "后端-接口" → PC 副本需求
+```
+
 ### 11. workspace 成员名册
 
 `tapd_list_workspace_users` 列 workspace 全员,返回每个人的 `user`(TAPD 用户名,与 TAPD 页面显示的一致,也是 owner / current_owner / timesheet owner 字段的合法值)、`name`(中文名)、`email`、`role_id` 等:
@@ -429,6 +469,7 @@ tapd_list_workspace_users workspace_id="..."
 - `tapd_update_timesheet` / `tapd_delete_timesheet` 需要 API token 额外勾选 `timesheets::update` / `timesheets::delete` 权限；缺失时返回 403，需登录 TAPD 管理页补权限。
 - **字段 schema 缓存可能过期**:在 TAPD 后台调整了自定义字段(新增、改 label、改选项)后,`tapd_set_story_custom_field` 还会按旧 label 解析,加 `refresh=true` 再写入即可(见 §7)。
 - **写空字符串清字段**：`tapd_update_story` 会自动剔除空串字段；如果想把某个自定义字段恢复成空，用 `tapd_set_story_custom_field value=""`，它内部已显式放行空串。
+- **迭代缺陷列表 ≠ 需求关联缺陷**：`tapd_list_bugs iteration_id="..."` 返回的是该迭代下的**全部**缺陷，不是某个需求专属的。缺陷的 `story_id` 字段通常为 `null`（TAPD 关联关系走独立关系表）。获取需求关联缺陷请用 `tapd_get_story_related_bugs`（见 §12），不要手动筛选。
 
 ## 一句话决策
 

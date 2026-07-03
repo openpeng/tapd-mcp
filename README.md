@@ -208,7 +208,7 @@ If you prefer not to use npx, you can install globally and use the binary path:
 }
 ```
 
-## Available Tools (31 total)
+## Available Tools (32 total)
 
 ### Story Tools
 
@@ -283,6 +283,12 @@ If you prefer not to use npx, you can install globally and use the binary path:
 | `tapd_create_release` | Create a new release |
 | `tapd_update_release` | Update a release |
 
+### Image Tools
+
+| Tool | Description |
+|------|-------------|
+| `tapd_get_image` | Download a single TAPD inline image by its path (e.g. `/tfl/captures/2026-06/tapd_xxx.png`). Returns the local file path so the caller can read the image. |
+
 ### Other Tools
 
 | Tool | Description |
@@ -335,6 +341,15 @@ Use tapd_add_comment with:
   entry_id: "112345678901234567"
   description: "Code review completed, ready for testing"
 ```
+
+### Download an inline image from a story
+
+```
+Use tapd_get_image with:
+  workspace_id: "12345"
+  image_path: "/tfl/captures/2026-06/tapd_xxx.png"
+```
+
 
 ## Status Values
 

@@ -1,11 +1,11 @@
 ---
 name: tapd
-description: 用 TAPD MCP 工具操作 TAPD(腾讯敏捷研发平台)的需求/任务/缺陷/迭代/评论/发布/工时/附件/自定义字段。当用户要求查看、创建、修改 TAPD story/task/bug/iteration/release/comment/timesheet,或贴出 tapd.cn 链接要求处理时调用。覆盖 38 个 `tapd_*` 工具(含变更历史、成员名册、release 详情、需求关联缺陷查询、自定义字段写入支持别名 fuzzy 匹配、env 驱动的 story 默认字段填充),并给出字段裁剪、状态枚举、URL 解析、工时填写、自定义字段解析、归属字段配置等关键约定。
+description: 用 TAPD MCP 工具操作 TAPD(腾讯敏捷研发平台)的需求/任务/缺陷/迭代/评论/发布/工时/附件/自定义字段。当用户要求查看、创建、修改 TAPD story/task/bug/iteration/release/comment/timesheet,或贴出 tapd.cn 链接要求处理时调用。覆盖 39 个 `tapd_*` 工具(含变更历史、成员名册、release 详情、需求关联缺陷查询、图片下载、自定义字段写入支持别名 fuzzy 匹配、env 驱动的 story 默认字段填充),并给出字段裁剪、状态枚举、URL 解析、工时填写、自定义字段解析、归属字段配置等关键约定。
 ---
 
 # TAPD 操作说明
 
-本 skill 对应 `tapd-mcp` 服务暴露的 **38 个**工具,覆盖 8 类资源:Story(需求)、Task(任务)、Bug、Iteration(迭代)、Release(发布)、Comment(评论)、Timesheet(工时记录)、Attachment(附件),外加自定义字段查询/写入(支持别名 fuzzy 匹配 + 缓存刷新)、env 驱动的 story 默认字段配置、URL 解析、变更历史、workspace 成员名册与代码关联。
+本 skill 对应 `tapd-mcp` 服务暴露的 **39 个**工具,覆盖 8 类资源:Story(需求)、Task(任务)、Bug、Iteration(迭代)、Release(发布)、Comment(评论)、Timesheet(工时记录)、Attachment(附件),外加图片下载、自定义字段查询/写入(支持别名 fuzzy 匹配 + 缓存刷新)、env 驱动的 story 默认字段配置、URL 解析、变更历史、workspace 成员名册与代码关联。
 
 ## 前置检查：工具是否可用
 
@@ -51,7 +51,7 @@ description: 用 TAPD MCP 工具操作 TAPD(腾讯敏捷研发平台)的需求/�
 - 用户提到 TAPD、需求/故事、迭代、bug、缺陷、任务认领、工时、评审、发布列车等
 - 用户要求"查/列/建/改"上述资源；纯阅读优先 `get_*` / `list_*`，写操作前要先理解 ID
 
-## 工具速查表(共 38 个)
+## 工具速查表(共 39 个)
 
 | 资源 | 读 | 写 |
 |------|------|------|
@@ -63,6 +63,7 @@ description: 用 TAPD MCP 工具操作 TAPD(腾讯敏捷研发平台)的需求/�
 | Comment | `tapd_list_comments` | `tapd_add_comment` |
 | Timesheet | `tapd_list_timesheets` | `tapd_add_timesheet`, `tapd_update_timesheet`, `tapd_delete_timesheet` |
 | Attachment | `tapd_list_attachments` | `tapd_upload_attachment` |
+| Image | `tapd_get_image` | — |
 | Custom Fields | `tapd_get_custom_fields_settings` | — |
 | Config | `tapd_get_config` | — |
 | Util | `tapd_parse_url`, `tapd_get_current_user`, `tapd_list_workspace_users` | — |
@@ -177,6 +178,18 @@ tapd_upload_attachment entity_type="stories" entity_id="..." file_base64="iVBORw
 ```
 
 `file_path` 与 `file_base64` 互斥；`content_type` 一般可省略，TAPD 会按扩展名识别。返回值含附件 `id` / `download_url`，需要展示给用户时回贴这两个字段即可。
+
+### 4.2 下载 Story 描述中的内联图片
+
+`tapd_get_image` 下载 TAPD 内联图片（如 `/tfl/captures/2026-06/tapd_xxx.png`）到本地临时目录并返回文件路径，适合 AI 读取图片做视觉分析。`image_path` 可从 story 描述 HTML 中的 `<img src="...">` 提取：
+
+```
+tapd_get_image workspace_id="..." image_path="/tfl/captures/2026-06/tapd_xxx.png"
+```
+
+`image_path` 支持两种格式：TAPD 相对路径（`/tfl/captures/...`）和完整 URL（`https://www.tapd.cn/tfl/captures/...`）。返回 `{ image_path, local_path, mime_type, size }`。
+
+> `tapd_get_story` 也支持 `download_images=true` 参数，会在获取 story 详情时自动下载描述中的所有内联图片，返回 `_images: { count, items: [{local_path, ...}], errors }`。如果只需要看图片内容，直接用 `tapd_get_story ... download_images=true` 更省事。
 
 ### 5. 创建 Story / Bug
 

@@ -17,6 +17,12 @@ import {
   readConfig,
   getConfigSource,
 } from './config-store.js';
+import {
+  extractImageUrls,
+  downloadImage,
+  isTapdInlineImage,
+  type DownloadedImage,
+} from './image-utils.js';
 
 const API_TOKEN = process.env.TAPD_API_TOKEN;
 const DEFAULT_WORKSPACE_ID = process.env.TAPD_WORKSPACE_ID;
@@ -59,7 +65,35 @@ const tools: Tool[] = [
             'Comma-separated field list to return, e.g. "id,name,status,owner,priority,description,iteration_id,created". ' +
             'Default: "id,name,status". Use "*" to return all TAPD fields (~260, response will be very large).',
         },
+        download_images: {
+          type: 'boolean',
+          description:
+            'When true AND the story description contains inline <img> tags, ' +
+            'download those images to local disk and return their paths in `_images`. ' +
+            'Useful when you need to analyse screenshots / diagrams embedded in the description.',
+        },
       },
+    },
+  },
+  {
+    name: 'tapd_get_image',
+    description:
+      'Download a single TAPD inline image by its path (e.g. "/tfl/captures/2026-06/tapd_xxx.png"). ' +
+      'Returns a local file path so the caller can read the image with a Read tool. ' +
+      'Use this after getting a story whose description references images: ' +
+      'extract the src paths from <img> tags and pass them here.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID (optional if default set)' },
+        image_path: {
+          type: 'string',
+          description:
+            'Image path from the <img> tag src attribute. ' +
+            'Can be a relative TAPD path ("/tfl/captures/...") or a full URL.',
+        },
+      },
+      required: ['image_path'],
     },
   },
   {
@@ -826,19 +860,82 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
     // Story handlers
     case 'tapd_get_story': {
       const { fields, requested, isAll } = resolveFields(args);
+      const downloadImages = args.download_images === true;
+      // Always request description when we plan to download images
+      const apiFields = downloadImages
+        ? (fields ? `${fields}` : 'id,name,status,description')
+        : fields;
       const attachStatusName = (s: any) =>
         s && (isAll || requested.has('status'))
           ? { ...s, status_name: client.translateStoryStatus(s.status || '') }
           : s;
+
+      let story: any;
+      let wsId: string;
       if (args.url) {
         const parsed = client.parseUrl(args.url as string);
         if (!parsed) throw new Error('Invalid TAPD URL');
-        const story = await client.getStory(parsed.workspaceId, parsed.resourceId, fields);
-        return attachStatusName(story);
+        wsId = parsed.workspaceId;
+        story = await client.getStory(wsId, parsed.resourceId, apiFields);
+      } else {
+        wsId = getWorkspaceId(args);
+        story = await client.getStory(wsId, args.story_id as string, apiFields);
       }
+
+      story = attachStatusName(story);
+
+      // Download inline images if requested and description exists
+      if (downloadImages && story?.description) {
+        const imageUrls = extractImageUrls(story.description);
+        if (imageUrls.length > 0) {
+          const downloadResults: DownloadedImage[] = [];
+          const errors: Array<{ url: string; error: string }> = [];
+          for (const imgUrl of imageUrls) {
+            try {
+              // TAPD inline paths need to go through get_image API for auth
+              let downloadUrl: string;
+              if (isTapdInlineImage(imgUrl)) {
+                // Strip TAPD domain prefix if it's a full tapd.cn URL
+                const path = imgUrl.replace(/^https?:\/\/[^\/]+/, '');
+                const imgInfo = await client.getImage(wsId, path);
+                downloadUrl = imgInfo.download_url;
+              } else {
+                downloadUrl = imgUrl;
+              }
+              const img = await downloadImage(downloadUrl);
+              downloadResults.push(img);
+            } catch (e) {
+              errors.push({
+                url: imgUrl,
+                error: e instanceof Error ? e.message : String(e),
+              });
+            }
+          }
+          return {
+            ...story,
+            _images: {
+              count: downloadResults.length,
+              errors: errors.length > 0 ? errors : undefined,
+              items: downloadResults,
+            },
+          };
+        }
+      }
+
+      return story;
+    }
+
+    case 'tapd_get_image': {
       const wsId = getWorkspaceId(args);
-      const story = await client.getStory(wsId, args.story_id as string, fields);
-      return attachStatusName(story);
+      const imagePath = args.image_path as string;
+      // Strip domain prefix if present (full URL -> path)
+      const path = imagePath.replace(/^https?:\/\/[^\/]+/, '');
+      const imgInfo = await client.getImage(wsId, path);
+      const result = await downloadImage(imgInfo.download_url);
+      return {
+        image_path: path,
+        ...result,
+      };
     }
 
     case 'tapd_list_stories': {
