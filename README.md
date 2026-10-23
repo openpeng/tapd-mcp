@@ -50,6 +50,34 @@ npx tapd-mcp
 | `TAPD_CURRENT_USER` | No | Your TAPD user id (e.g. `xiaopeng_lei`). Used by `tapd_get_current_user` so AI assistants can identify "you". |
 | `TAPD_API_USER` | No | TAPD **API account** username for Basic Auth. Set together with `TAPD_API_PASSWORD` to fall back to Basic Auth (some legacy endpoints, notably attachment upload, may reject Bearer tokens). When both are set, all requests use Basic Auth instead of the Bearer token. |
 | `TAPD_API_PASSWORD` | No | TAPD API account password (paired with `TAPD_API_USER`). |
+| `TAPD_API_BASE_URL` | No | API base URL. Defaults to `https://api.tapd.cn`. Set this to target a **private / self-hosted TAPD deployment** (e.g. `https://api.tapd.example.com`). |
+| `TAPD_WEB_BASE_URL` | No | Web (UI) base URL of a private deployment (e.g. `https://www.tapd.example.com`). Used to resolve relative image/attachment download URLs. |
+
+### Private / Self-Hosted TAPD Deployment
+
+This server talks to the standard TAPD Open API and also works against
+private deployments. Point it at your own host:
+
+```json
+{
+  "mcpServers": {
+    "tapd": {
+      "command": "npx",
+      "args": ["-y", "tapd-mcp"],
+      "env": {
+        "TAPD_API_TOKEN": "your_api_token_here",
+        "TAPD_API_BASE_URL": "https://api.tapd.example.com",
+        "TAPD_WEB_BASE_URL": "https://www.tapd.example.com",
+        "TAPD_WORKSPACE_ID": "your_default_workspace_id"
+      }
+    }
+  }
+}
+```
+
+> **Note:** Without `TAPD_API_BASE_URL`, all requests go to the public
+> `https://api.tapd.cn`. Never run the server against a private deployment
+> with a production API token without setting it first.
 
 ### Get Your API Token
 
