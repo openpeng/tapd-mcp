@@ -245,6 +245,34 @@ const BUG_STATUS_MAP: Record<string, string> = {
   'reopened': '重新打开',
 };
 
+/**
+ * TAPD entity type names are singular on the APIs that filter/attach by type
+ * ("story" / "task" / "bug"), while this MCP server's tool surface uses the
+ * plural forms ("stories" / "tasks" / "bugs") for consistency.
+ *
+ * Never derive the singular form by trimming the trailing "s": "stories"
+ * would become "storie", which TAPD rejects with `type is invalid`. Map
+ * explicitly instead.
+ */
+const TAPD_SINGULAR_TYPE: Record<string, string> = {
+  stories: 'story',
+  tasks: 'task',
+  bugs: 'bug',
+};
+
+/**
+ * Normalize a plural MCP entity_type ("stories"/"tasks"/"bugs") to the
+ * singular name TAPD expects ("story"/"task"/"bug"). Unknown values are
+ * passed through unchanged so server-side errors stay legible.
+ *
+ * Note: TAPD's /comments API is the odd one out — it expects the PLURAL
+ * `entry_type` ("stories"/"tasks"/"bugs"). Do not normalize comment calls.
+ */
+export function toSingularEntityType(entityType?: string): string | undefined {
+  if (!entityType) return entityType;
+  return TAPD_SINGULAR_TYPE[entityType] ?? entityType;
+}
+
 export class TapdClient {
   private apiToken: string;
   private baseUrl: string;
@@ -1141,6 +1169,11 @@ export class TapdClient {
 
   // ==================== Comment APIs ====================
 
+  // NOTE: TAPD's /comments API expects the PLURAL entry_type
+  // ("stories" / "tasks" / "bugs") — unlike /files/upload_attachment and
+  // /timesheets, which expect the singular form. Do not normalize these
+  // calls: TAPD returns "entry_type is required." / an empty list otherwise.
+
   async listComments(
     workspaceId: string,
     entryType: 'stories' | 'tasks' | 'bugs',
@@ -1389,10 +1422,12 @@ export class TapdClient {
     const blob = new Blob([new Uint8Array(buffer)], options?.contentType ? { type: options.contentType } : undefined);
 
     // Map plural entity_type ('stories'/'tasks'/'bugs') to TAPD's singular `type`
-    // ('story'/'task'/'bug'). When customField is provided, the type becomes
-    // '<base>_custom_field' to attach into a rich-text custom field.
-    const baseType = entityType.endsWith('s') ? entityType.slice(0, -1) : entityType;
-    const tapdType = options?.customField ? `${baseType}_custom_field` : baseType;
+    // ('story'/'task'/'bug'). TAPD embeds the upload into a rich-text custom
+    // field when the `custom_field` param is present — `type` must stay the
+    // singular entity name in that case: TAPD rejects "<type>_custom_field"
+    // combined with a `custom_field` param ("custom_field parameters only
+    // apply to story, task and bug").
+    const tapdType = toSingularEntityType(entityType) ?? entityType;
 
     const form = new FormData();
     form.append('workspace_id', workspaceId);
@@ -1483,16 +1518,6 @@ export class TapdClient {
 
   // ==================== Timesheet APIs ====================
 
-  /**
-   * TAPD timesheet API expects singular entity_type ("task"/"story"/"bug"),
-   * but our MCP tool surface uses plural ("tasks"/"stories"/"bugs") for
-   * consistency with comments/attachments. Normalize here.
-   */
-  private toSingularEntityType(entityType?: string): string | undefined {
-    if (!entityType) return entityType;
-    return entityType.endsWith('s') ? entityType.slice(0, -1) : entityType;
-  }
-
   async listTimesheets(
     workspaceId: string,
     options?: {
@@ -1508,7 +1533,7 @@ export class TapdClient {
   ): Promise<Timesheet[]> {
     const params: Record<string, string | number | undefined> = {
       workspace_id: workspaceId,
-      entity_type: this.toSingularEntityType(options?.entityType),
+      entity_type: toSingularEntityType(options?.entityType),
       entity_id: options?.entityId,
       owner: options?.owner,
       limit: options?.limit || 30,
@@ -1538,7 +1563,7 @@ export class TapdClient {
   ): Promise<Timesheet> {
     const response = await this.request<{ Timesheet: Timesheet }>('POST', '/timesheets', {
       workspace_id: workspaceId,
-      entity_type: this.toSingularEntityType(data.entityType),
+      entity_type: toSingularEntityType(data.entityType),
       entity_id: data.entityId,
       timespent: data.timespent,
       spentdate: data.spentdate,
@@ -1594,7 +1619,7 @@ export class TapdClient {
     options?: { limit?: number; page?: number }
   ): Promise<Attachment[]> {
     // TAPD /attachments uses singular type for filter
-    const tapdType = entityType.endsWith('s') ? entityType.slice(0, -1) : entityType;
+    const tapdType = toSingularEntityType(entityType) ?? entityType;
     const response = await this.request<{ Attachment: Attachment }>('GET', '/attachments', {
       workspace_id: workspaceId,
       entry_type: tapdType,

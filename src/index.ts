@@ -490,7 +490,7 @@ const tools: Tool[] = [
       '(base64-encoded bytes; requires `filename`). ' +
       'By default the file is attached to the entity\'s "Attachments" section. ' +
       'Pass `custom_field` (e.g. "custom_field_one") to instead embed the file into a ' +
-      'rich-text custom field (TAPD treats this as `<type>_custom_field` upload).',
+      'rich-text custom field (TAPD then stores it in that field instead of the attachment list).',
     inputSchema: {
       type: 'object',
       properties: {
