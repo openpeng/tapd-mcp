@@ -30,6 +30,8 @@ const CURRENT_USER = process.env.TAPD_CURRENT_USER;
 const API_USER = process.env.TAPD_API_USER;
 const API_PASSWORD = process.env.TAPD_API_PASSWORD;
 const ATTACHMENT_ENDPOINT = process.env.TAPD_ATTACHMENT_ENDPOINT;
+const API_BASE_URL = process.env.TAPD_API_BASE_URL;
+const WEB_BASE_URL = process.env.TAPD_WEB_BASE_URL;
 
 const hasBasicAuth = Boolean(API_USER && API_PASSWORD);
 
@@ -41,6 +43,8 @@ if (!API_TOKEN && !hasBasicAuth) {
 
 const client = new TapdClient({
   apiToken: API_TOKEN || '',
+  baseUrl: API_BASE_URL,
+  webBaseUrl: WEB_BASE_URL,
   basicAuth: hasBasicAuth ? { username: API_USER!, password: API_PASSWORD! } : undefined,
   attachmentEndpoint: ATTACHMENT_ENDPOINT,
 });

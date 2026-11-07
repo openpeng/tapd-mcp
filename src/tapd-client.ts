@@ -21,6 +21,14 @@ export interface TapdConfig {
    * `/files/upload_attachment` (the documented TAPD endpoint).
    */
   attachmentEndpoint?: string;
+  /**
+   * Web (UI) base URL for a private TAPD deployment, e.g.
+   * https://www.tapd.example.com. Used to resolve relative
+   * attachment/image download URLs, which public TAPD returns as absolute
+   * https://www.tapd.cn/... URLs but private deployments may return as
+   * root-relative paths.
+   */
+  webBaseUrl?: string;
 }
 
 export interface Attachment {
@@ -278,12 +286,14 @@ export class TapdClient {
   private baseUrl: string;
   private basicAuth?: { username: string; password: string };
   private attachmentEndpoint: string;
+  private webBaseUrl?: string;
 
   constructor(config: TapdConfig) {
     this.apiToken = config.apiToken;
     this.baseUrl = config.baseUrl || 'https://api.tapd.cn';
     this.basicAuth = config.basicAuth;
     this.attachmentEndpoint = config.attachmentEndpoint || '/files/upload_attachment';
+    this.webBaseUrl = config.webBaseUrl?.replace(/\/+$/, '');
   }
 
   private buildAuthHeader(): string {
@@ -1372,8 +1382,20 @@ export class TapdClient {
       value: att.value || imagePath,
       workspace_id: att.workspace_id,
       filename: att.filename || imagePath.split('/').pop() || 'image.png',
-      download_url: att.download_url,
+      download_url: this.resolveWebUrl(att.download_url),
     };
+  }
+
+  /**
+   * Resolve a possibly-relative download URL against the web base URL.
+   * Public TAPD returns absolute https://www.tapd.cn/... URLs; private
+   * deployments often return root-relative paths instead.
+   */
+  private resolveWebUrl(url: string | undefined): string {
+    if (!url) return '';
+    if (/^https?:\/\//i.test(url)) return url;
+    if (!this.webBaseUrl) return url;
+    return this.webBaseUrl + (url.startsWith('/') ? url : '/' + url);
   }
 
   /**
@@ -1664,9 +1686,11 @@ export class TapdClient {
 
   parseUrl(url: string): { workspaceId: string; resourceType: string; resourceId: string } | null {
     const patterns = [
-      /tapd\.cn\/tapd_fe\/(\d+)\/(\w+)\/detail\/(\d+)/i,
-      /tapd\.cn\/tapd_fe\/(\d+)\/(\w+)\/view\/(\d+)/i,
-      /tapd\.cn\/(\d+)\/prong\/(\w+)\/view\/(\d+)/i,
+      // Host-agnostic: matches both public TAPD (tapd.cn) and
+      // private deployments (any custom domain).
+      /[^/]+\/tapd_fe\/(\d+)\/(\w+)\/detail\/(\d+)/i,
+      /[^/]+\/tapd_fe\/(\d+)\/(\w+)\/view\/(\d+)/i,
+      /[^/]+\/(\d+)\/prong\/(\w+)\/view\/(\d+)/i,
     ];
 
     for (const pattern of patterns) {
