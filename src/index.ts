@@ -23,6 +23,7 @@ import {
   isTapdInlineImage,
   type DownloadedImage,
 } from './image-utils.js';
+import { relaxScalarTypes, normalizeArgs } from './host-compat.js';
 
 const API_TOKEN = process.env.TAPD_API_TOKEN;
 const DEFAULT_WORKSPACE_ID = process.env.TAPD_WORKSPACE_ID;
@@ -45,7 +46,17 @@ const client = new TapdClient({
   attachmentEndpoint: ATTACHMENT_ENDPOINT,
 });
 
-const tools: Tool[] = [
+/**
+ * Tool definitions.
+ *
+ * Every `inputSchema` is passed through `relaxScalarTypes()` so that each
+ * scalar property advertises a union of the types an MCP host may hand us.
+ * Some hosts coerce numeric-looking strings into numbers before validating
+ * the call, which would otherwise reject a perfectly valid
+ * `workspace_id: "37748852"` with `/workspace_id: must be string`.
+ * See `host-compat.ts` for the full explanation.
+ */
+const RAW_TOOLS: Tool[] = [
   // ==================== Story Tools ====================
   {
     name: 'tapd_get_story',
@@ -834,8 +845,23 @@ const tools: Tool[] = [
   },
 ];
 
+const tools: Tool[] = RAW_TOOLS.map((tool) => ({
+  ...tool,
+  inputSchema: relaxScalarTypes(tool.inputSchema as Record<string, any>) as Tool['inputSchema'],
+}));
+
+/**
+ * Look up a tool's declared input schema, used to normalise incoming args.
+ */
+function getToolSchema(name: string): Record<string, any> | undefined {
+  const tool = tools.find((t) => t.name === name);
+  return tool?.inputSchema as Record<string, any> | undefined;
+}
+
 function getWorkspaceId(args: Record<string, unknown>): string {
-  const wsId = args.workspace_id as string | undefined;
+  // `workspace_id` may arrive as a number (hosts coerce numeric strings).
+  const raw = args.workspace_id;
+  const wsId = raw === undefined || raw === null ? '' : String(raw).trim();
   if (wsId) return wsId;
   if (DEFAULT_WORKSPACE_ID) return DEFAULT_WORKSPACE_ID;
   throw new Error('workspace_id is required (or set TAPD_WORKSPACE_ID env var)');
@@ -854,7 +880,11 @@ function resolveFields(
   args: Record<string, unknown>,
   defaultFields = 'id,name,status'
 ): { fields: string | undefined; requested: Set<string>; isAll: boolean } {
-  const raw = (args.fields as string | undefined)?.trim();
+  // `fields` may arrive as a number (hosts coerce numeric strings), so coerce
+  // before calling string methods on it.
+  const rawValue = args.fields;
+  const raw =
+    rawValue === undefined || rawValue === null ? undefined : String(rawValue).trim();
   if (raw === '*' || raw === 'all') {
     return { fields: undefined, requested: new Set(), isAll: true };
   }
@@ -863,12 +893,36 @@ function resolveFields(
   return { fields, requested, isAll: false };
 }
 
+/**
+ * Read a boolean argument.
+ *
+ * Hosts may deliver booleans as `true`, as the strings `"true"`/`"false"`, or
+ * as `1`/`0`, so accept every unambiguous spelling.
+ */
+function toBool(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const lowered = value.trim().toLowerCase();
+    if (lowered === 'true' || lowered === '1') return true;
+    if (lowered === 'false' || lowered === '0') return false;
+  }
+  return false;
+}
+
 async function handleToolCall(name: string, args: Record<string, unknown>): Promise<unknown> {
+  // Normalise the incoming arguments against the tool's declared schema first.
+  // Hosts may hand us numbers where a string is expected (numeric ids) or
+  // strings where a number is expected, so handlers should be able to trust
+  // the declared types. See `host-compat.ts`.
+  const schema = getToolSchema(name);
+  if (schema) normalizeArgs(args, schema);
+
   switch (name) {
     // Story handlers
     case 'tapd_get_story': {
       const { fields, requested, isAll } = resolveFields(args);
-      const downloadImages = args.download_images === true;
+      const downloadImages = toBool(args.download_images);
       // Always request description when we plan to download images
       const apiFields = downloadImages
         ? (fields ? `${fields}` : 'id,name,status,description')
@@ -1009,7 +1063,7 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
         if (!storyId) throw new Error('story_id (or url) is required');
       }
       return await client.setStoryCustomField(workspaceId, storyId, field, value, {
-        refresh: args.refresh === true,
+        refresh: toBool(args.refresh),
       });
     }
 
@@ -1292,7 +1346,7 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
       return await client.getCustomFieldsSettings(
         getWorkspaceId(args),
         (args.entry_type as string) || 'story',
-        { refresh: args.refresh === true }
+        { refresh: toBool(args.refresh) }
       );
     }
 
@@ -1331,7 +1385,7 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
       return await client.applyStoryDefaults(workspaceId, storyId, {
         hint: args.hint as string | undefined,
         overrides: (args.overrides as Record<string, string> | undefined) ?? undefined,
-        dryRun: args.dry_run === true,
+        dryRun: toBool(args.dry_run),
       });
     }
 
@@ -1429,7 +1483,7 @@ async function main() {
   const server = new Server(
     {
       name: 'tapd-mcp',
-      version: '1.0.0',
+      version: '1.0.12',
     },
     {
       capabilities: {
